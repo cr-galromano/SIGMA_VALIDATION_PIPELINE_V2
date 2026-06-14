@@ -1,0 +1,17 @@
+{
+  "system_type": "linux-server",
+  "os": "Ubuntu 22.04 LTS",
+  "domain_joined": false,
+  "logging_config": "auditd with standard ruleset (commands, privileged, cron)",
+  "capture_method": "hand-crafted synthetic",
+  "capture_date": "2026-06-11",
+  "capture_window": null,
+  "events": 4,
+  "format": "auditd",
+  "pii_scrubbed": true,
+  "scrub_method": "synthetic — no real user data",
+  "reviewed_by": null,
+  "review_date": null,
+  "signed_off": false,
+  "notes": "SYNTHETIC BASELINE — hand-crafted to represent normal auditd activity (bash, ls, sudo, cron). Replace with real captured baseline before production use. Real capture: stand up representative Linux server with same auditd config as prod → capture during known-quiet window → review for anomalies + PII → sign-off."
+}

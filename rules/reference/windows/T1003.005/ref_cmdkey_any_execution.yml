@@ -1,0 +1,22 @@
+title: "[REF] Any cmdkey.exe Execution"
+id: c241a953-fb21-43ac-b8a5-d56001de0e24
+status: stable
+description: |
+  REFERENCE RULE — for bad-pool sample acceptance only. Not an evaluation rule.
+  Fires on any execution of cmdkey.exe regardless of arguments or context.
+  Deliberately broader than evaluation rules; catches all T1003.005 cmdkey samples.
+  Rules in rules/reference/ are never submitted for evaluation.
+author: svp-sandbox
+date: 2026-06-11
+tags:
+    - attack.credential-access
+    - attack.t1003.005
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection:
+        - Image|endswith: '\cmdkey.exe'
+        - OriginalFileName: 'cmdkey.exe'
+    condition: 1 of selection
+level: informational

@@ -1,0 +1,17 @@
+{
+  "system_type": "workstation",
+  "os": "Windows 10",
+  "domain_joined": true,
+  "logging_config": "Sysmon v14 (default config)",
+  "capture_method": "Zircolite test fixture (synthetic)",
+  "capture_date": null,
+  "capture_window": null,
+  "events": 4,
+  "format": "sysmon-json",
+  "pii_scrubbed": true,
+  "scrub_method": "synthetic — no real user data",
+  "reviewed_by": null,
+  "review_date": null,
+  "signed_off": false,
+  "notes": "SYNTHETIC BASELINE — sourced from Zircolite v3.7.6 test fixtures. Replace with real captured baseline before production use. Real capture requires: clean VM with standard logging config → capture ~24h normal activity → export as Sysmon JSON → PII review → sign-off."
+}

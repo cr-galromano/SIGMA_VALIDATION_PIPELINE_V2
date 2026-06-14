@@ -1,0 +1,126 @@
+{
+  "version": "v2026.06.1",
+  "created": "2026-06-11",
+  "description": "Seed corpus: Phase 1 validation samples. Not for production use — bad-pool samples are synthetic/fixture-based, good-pool samples are synthetic baselines. Replace with real captures before production.",
+  "bad_pool": {
+    "windows": {
+      "T1003.005": {
+        "tactic": "credential-access",
+        "technique_name": "OS Credential Dumping: Cached Domain Credentials",
+        "format": "sysmon-json",
+        "logsource": { "category": "process_creation", "product": "windows" },
+        "pipeline": ["sysmon", "windows-logsources"],
+        "reference_rule": "rules/reference/windows/T1003.005/ref_cmdkey_any_execution.yml",
+        "reference_rule_status": "verified",
+        "sample_count": 1,
+        "samples": [
+          {
+            "file": "bad-pool/windows/T1003.005/cmdkey_list.json",
+            "source": "hand-crafted",
+            "events": 1,
+            "description": "cmdkey.exe /list — credential enumeration via Credential Manager",
+            "reference_rule_verified": true,
+            "sha256": null
+          }
+        ]
+      },
+      "T1059.001": {
+        "tactic": "execution",
+        "technique_name": "Command and Scripting Interpreter: PowerShell",
+        "format": "sysmon-json",
+        "logsource": { "category": "process_creation", "product": "windows" },
+        "pipeline": ["sysmon", "windows-logsources"],
+        "reference_rule": "rules/reference/windows/T1059.001/ref_powershell_encoded_flag.yml",
+        "reference_rule_status": "verified",
+        "sample_count": 1,
+        "samples": [
+          {
+            "file": "bad-pool/windows/T1059.001/powershell_encoded.json",
+            "source": "hand-crafted",
+            "events": 1,
+            "description": "powershell.exe -encodedCommand with JAB payload — includes OriginalFileName:PowerShell.EXE for reliable detection",
+            "reference_rule_verified": true,
+            "sha256": null
+          }
+        ]
+      }
+    },
+    "linux": {
+      "T1071.004": {
+        "tactic": "command-and-control",
+        "technique_name": "Application Layer Protocol: DNS / C2 tooling",
+        "format": "auditd",
+        "logsource": { "product": "linux", "service": "auditd" },
+        "pipeline": [],
+        "reference_rule": "rules/reference/linux/T1071.004/ref_auditd_susp_activity_key.yml",
+        "reference_rule_status": "verified",
+        "sample_count": 3,
+        "samples": [
+          {
+            "file": "bad-pool/linux/T1071.004/auditd_c2_curl_wget_nc.log",
+            "source": "hand-crafted",
+            "events": 3,
+            "description": "auditd SYSCALL records for curl, wget, ncat with key=susp_activity",
+            "reference_rule_verified": true,
+            "sha256": null
+          },
+          {
+            "file": "bad-pool/linux/T1071.004/sysmon_linux_c2_curl.log",
+            "source": "hand-crafted",
+            "events": 2,
+            "description": "Sysmon-for-Linux EventID 1 (process creation) and EventID 3 (network) for curl C2 call",
+            "reference_rule_verified": false,
+            "reference_rule_note": "Sysmon-for-Linux format not covered by the auditd reference rule. Needs a dedicated sysmon-linux reference rule for T1071.004.",
+            "sha256": null
+          }
+        ]
+      }
+    }
+  },
+  "good_pool": {
+    "windows": [
+      {
+        "source_dir": "good-pool/windows/workstation-baseline",
+        "system_type": "workstation",
+        "format": "sysmon-json",
+        "events": 4,
+        "provenance": "good-pool/windows/workstation-baseline/provenance.json"
+      }
+    ],
+    "linux": [
+      {
+        "source_dir": "good-pool/linux/server-baseline",
+        "system_type": "linux-server",
+        "format": "auditd",
+        "events": 4,
+        "provenance": "good-pool/linux/server-baseline/provenance.json"
+      }
+    ]
+  },
+  "controls": {
+    "description": "Positive-control anchors — must fire on every validation run before trusting good-pool silence.",
+    "anchors": [
+      {
+        "logsource": "windows-sysmon",
+        "file": "../../controls/win_cmdkey_anchor.json",
+        "rule": "../../rules/samples/windows/proc_creation_win_cmdkey_recon.yml",
+        "pipeline": ["sysmon", "windows-logsources"],
+        "expected_detections": 1
+      },
+      {
+        "logsource": "auditd",
+        "file": "../../controls/auditd_c2_anchor.log",
+        "rule": "../../rules/samples/linux/lnx_auditd_susp_c2_commands.yml",
+        "pipeline": [],
+        "expected_detections": 3
+      },
+      {
+        "logsource": "sysmon-linux",
+        "file": "../../controls/sysmon_linux_curl_anchor.log",
+        "rule": "../../scanner/zircolite/rules/rules_linux.json",
+        "pipeline": [],
+        "expected_detections": 1
+      }
+    ]
+  }
+}

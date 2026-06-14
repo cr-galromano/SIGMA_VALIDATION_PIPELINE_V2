@@ -1,0 +1,28 @@
+title: "[REF] PowerShell Encoded Command Flag"
+id: 7fbe1638-cadd-42ef-aad0-df96a299497e
+status: stable
+description: |
+  REFERENCE RULE — for bad-pool sample acceptance only. Not an evaluation rule.
+  Fires on any PowerShell invocation containing the -e / -en / -enc / -encodedCommand
+  flag. Deliberately broader than evaluation rules that check specific payload content.
+  Rules in rules/reference/ are never submitted for evaluation.
+author: svp-sandbox
+date: 2026-06-11
+tags:
+    - attack.execution
+    - attack.t1059.001
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    selection_img:
+        - Image|endswith:
+            - '\powershell.exe'
+            - '\pwsh.exe'
+        - OriginalFileName:
+            - 'PowerShell.EXE'
+            - 'pwsh.dll'
+    selection_enc_flag:
+        CommandLine|contains: ' -e'
+    condition: all of selection_*
+level: informational

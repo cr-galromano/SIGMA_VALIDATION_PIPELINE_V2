@@ -1,0 +1,3 @@
+[submodule "scanner/zircolite"]
+	path = scanner/zircolite
+	url = https://github.com/wagga40/Zircolite.git

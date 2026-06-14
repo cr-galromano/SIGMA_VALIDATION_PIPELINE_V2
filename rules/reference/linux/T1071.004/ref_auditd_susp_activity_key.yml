@@ -1,0 +1,23 @@
+title: "[REF] Auditd susp_activity Key"
+id: d1d62ae5-6b73-4225-a0c6-338b196c04fa
+status: stable
+description: |
+  REFERENCE RULE — for bad-pool sample acceptance only. Not an evaluation rule.
+  Fires on any auditd event tagged with key=susp_activity, which is the standard
+  auditd watchpoint key for suspicious network/C2 tooling (wget, curl, nc, ssh, etc.)
+  per Neo23x0/auditd best-practice ruleset. Deliberately broader than evaluation rules
+  that check individual tool names.
+  Rules in rules/reference/ are never submitted for evaluation.
+author: svp-sandbox
+date: 2026-06-11
+tags:
+    - attack.command-and-control
+    - attack.t1071.004
+logsource:
+    product: linux
+    service: auditd
+detection:
+    selection:
+        key: 'susp_activity'
+    condition: selection
+level: informational
