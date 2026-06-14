@@ -28,19 +28,21 @@ jobs:
 
       - name: Load Neo23x0 C2-tool watchpoints
         run: |
-          sudo tee /etc/audit/rules.d/svp_susp_activity.rules > /dev/null <<'EOF'
-          -w /usr/bin/wget -p x -k susp_activity
-          -w /usr/bin/curl -p x -k susp_activity
-          -w /usr/bin/base64 -p x -k susp_activity
-          -w /bin/nc -p x -k susp_activity
-          -w /bin/netcat -p x -k susp_activity
-          -w /usr/bin/ncat -p x -k susp_activity
-          -w /usr/bin/ss -p x -k susp_activity
-          -w /usr/bin/ssh -p x -k susp_activity
-          -w /usr/bin/socat -p x -k susp_activity
-          -w /usr/bin/nmap -p x -k susp_activity
-          EOF
-          sudo augenrules --load
+          # Write rules with printf to avoid heredoc indentation issues
+          printf '%s\n' \
+            '-w /usr/bin/wget -p x -k susp_activity' \
+            '-w /usr/bin/curl -p x -k susp_activity' \
+            '-w /usr/bin/base64 -p x -k susp_activity' \
+            '-w /bin/nc -p x -k susp_activity' \
+            '-w /bin/netcat -p x -k susp_activity' \
+            '-w /usr/bin/ncat -p x -k susp_activity' \
+            '-w /usr/bin/ss -p x -k susp_activity' \
+            '-w /usr/bin/ssh -p x -k susp_activity' \
+            '-w /usr/bin/socat -p x -k susp_activity' \
+            '-w /usr/bin/nmap -p x -k susp_activity' \
+            | sudo tee /etc/audit/rules.d/svp_susp_activity.rules
+          # Load directly into running kernel (auditctl -R is immediate; augenrules --load is not)
+          sudo auditctl -R /etc/audit/rules.d/svp_susp_activity.rules
           sleep 1
           echo "Active watchpoints:"
           sudo auditctl -l | grep susp_activity
@@ -120,19 +122,19 @@ jobs:
 
       - name: Load same watchpoints as bad-pool (required — identical logging config)
         run: |
-          sudo tee /etc/audit/rules.d/svp_susp_activity.rules > /dev/null <<'EOF'
-          -w /usr/bin/wget -p x -k susp_activity
-          -w /usr/bin/curl -p x -k susp_activity
-          -w /usr/bin/base64 -p x -k susp_activity
-          -w /bin/nc -p x -k susp_activity
-          -w /bin/netcat -p x -k susp_activity
-          -w /usr/bin/ncat -p x -k susp_activity
-          -w /usr/bin/ss -p x -k susp_activity
-          -w /usr/bin/ssh -p x -k susp_activity
-          -w /usr/bin/socat -p x -k susp_activity
-          -w /usr/bin/nmap -p x -k susp_activity
-          EOF
-          sudo augenrules --load
+          printf '%s\n' \
+            '-w /usr/bin/wget -p x -k susp_activity' \
+            '-w /usr/bin/curl -p x -k susp_activity' \
+            '-w /usr/bin/base64 -p x -k susp_activity' \
+            '-w /bin/nc -p x -k susp_activity' \
+            '-w /bin/netcat -p x -k susp_activity' \
+            '-w /usr/bin/ncat -p x -k susp_activity' \
+            '-w /usr/bin/ss -p x -k susp_activity' \
+            '-w /usr/bin/ssh -p x -k susp_activity' \
+            '-w /usr/bin/socat -p x -k susp_activity' \
+            '-w /usr/bin/nmap -p x -k susp_activity' \
+            | sudo tee /etc/audit/rules.d/svp_susp_activity.rules
+          sudo auditctl -R /etc/audit/rules.d/svp_susp_activity.rules
           sleep 1
 
       - name: Record start position
