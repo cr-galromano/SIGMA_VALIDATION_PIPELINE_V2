@@ -1,15 +1,21 @@
 {
   "version": "v2026.06.1",
   "created": "2026-06-11",
-  "description": "Seed corpus: Phase 1 validation samples. Not for production use — bad-pool samples are synthetic/fixture-based, good-pool samples are synthetic baselines. Replace with real captures before production.",
+  "description": "Seed corpus: Phase 1 validation samples. Not for production use \u2014 bad-pool samples are synthetic/fixture-based, good-pool samples are synthetic baselines. Replace with real captures before production.",
   "bad_pool": {
     "windows": {
       "T1003.005": {
         "tactic": "credential-access",
         "technique_name": "OS Credential Dumping: Cached Domain Credentials",
         "format": "sysmon-json",
-        "logsource": { "category": "process_creation", "product": "windows" },
-        "pipeline": ["sysmon", "windows-logsources"],
+        "logsource": {
+          "category": "process_creation",
+          "product": "windows"
+        },
+        "pipeline": [
+          "sysmon",
+          "windows-logsources"
+        ],
         "reference_rule": "rules/reference/windows/T1003.005/ref_cmdkey_any_execution.yml",
         "reference_rule_status": "verified",
         "sample_count": 1,
@@ -18,7 +24,7 @@
             "file": "bad-pool/windows/T1003.005/cmdkey_list.json",
             "source": "hand-crafted",
             "events": 1,
-            "description": "cmdkey.exe /list — credential enumeration via Credential Manager",
+            "description": "cmdkey.exe /list \u2014 credential enumeration via Credential Manager",
             "reference_rule_verified": true,
             "sha256": null
           }
@@ -28,8 +34,14 @@
         "tactic": "execution",
         "technique_name": "Command and Scripting Interpreter: PowerShell",
         "format": "sysmon-json",
-        "logsource": { "category": "process_creation", "product": "windows" },
-        "pipeline": ["sysmon", "windows-logsources"],
+        "logsource": {
+          "category": "process_creation",
+          "product": "windows"
+        },
+        "pipeline": [
+          "sysmon",
+          "windows-logsources"
+        ],
         "reference_rule": "rules/reference/windows/T1059.001/ref_powershell_encoded_flag.yml",
         "reference_rule_status": "verified",
         "sample_count": 1,
@@ -38,7 +50,7 @@
             "file": "bad-pool/windows/T1059.001/powershell_encoded.json",
             "source": "hand-crafted",
             "events": 1,
-            "description": "powershell.exe -encodedCommand with JAB payload — includes OriginalFileName:PowerShell.EXE for reliable detection",
+            "description": "powershell.exe -encodedCommand with JAB payload \u2014 includes OriginalFileName:PowerShell.EXE for reliable detection",
             "reference_rule_verified": true,
             "sha256": null
           }
@@ -50,7 +62,10 @@
         "tactic": "command-and-control",
         "technique_name": "Application Layer Protocol: DNS / C2 tooling",
         "format": "auditd",
-        "logsource": { "product": "linux", "service": "auditd" },
+        "logsource": {
+          "product": "linux",
+          "service": "auditd"
+        },
         "pipeline": [],
         "reference_rule": "rules/reference/linux/T1071.004/ref_auditd_susp_activity_key.yml",
         "reference_rule_status": "verified",
@@ -72,6 +87,15 @@
             "reference_rule_verified": false,
             "reference_rule_note": "Sysmon-for-Linux format not covered by the auditd reference rule. Needs a dedicated sysmon-linux reference rule for T1071.004.",
             "sha256": null
+          },
+          {
+            "file": "bad-pool/linux/T1071.004/detonation.log",
+            "source": "detonation",
+            "events": 4,
+            "description": "Real detonation capture: curl wget base64 nc ncat via exec watchpoints (key=susp_activity)",
+            "capture_date": "2026-06-14",
+            "reference_rule_verified": true,
+            "sha256": "e8c8aa2535cbad476bb1e86a60872bc8f164478f807748730744687fee43498d"
           }
         ]
       }
@@ -94,17 +118,27 @@
         "format": "auditd",
         "events": 4,
         "provenance": "good-pool/linux/server-baseline/provenance.json"
+      },
+      {
+        "source_dir": "good-pool/linux/server-baseline-real",
+        "system_type": "linux-server",
+        "format": "auditd",
+        "events": 26,
+        "provenance": "good-pool/linux/server-baseline-real/provenance.json"
       }
     ]
   },
   "controls": {
-    "description": "Positive-control anchors — must fire on every validation run before trusting good-pool silence.",
+    "description": "Positive-control anchors \u2014 must fire on every validation run before trusting good-pool silence.",
     "anchors": [
       {
         "logsource": "windows-sysmon",
         "file": "../../controls/win_cmdkey_anchor.json",
         "rule": "../../rules/samples/windows/proc_creation_win_cmdkey_recon.yml",
-        "pipeline": ["sysmon", "windows-logsources"],
+        "pipeline": [
+          "sysmon",
+          "windows-logsources"
+        ],
         "expected_detections": 1
       },
       {

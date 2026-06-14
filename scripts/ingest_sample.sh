@@ -42,7 +42,7 @@ done
 
 # ---------- helpers ----------
 read_meta() {
-  grep -E "^$1:" "$META_FILE" | head -1 | sed "s/^$1:[[:space:]]*//" | sed 's/[[:space:]]*#.*//' | xargs
+  (grep -E "^$1:" "$META_FILE" || true) | head -1 | sed "s/^$1:[[:space:]]*//" | sed 's/[[:space:]]*#.*//' | xargs || true
 }
 
 require_meta() {
@@ -110,8 +110,11 @@ if $GOOD_POOL; then
       --config "$SVP_ROOT/scanner/zircolite/config/config.yaml" \
       --auditd --nolog 2>&1 || true)
 
-    HIT_COUNT=$(echo "$ANOMALY_OUTPUT" | grep -c '"count"' 2>/dev/null || echo "0")
-    if echo "$ANOMALY_OUTPUT" | grep -q '"count"'; then
+    HIT_COUNT=$(echo "$ANOMALY_OUTPUT" | python3 -c "
+import sys, re; text = sys.stdin.read()
+m = re.search(r'Detections\s+(\d+)', text); print(m.group(1) if m else '0')
+" 2>/dev/null || echo "0")
+    if [[ "$HIT_COUNT" != "0" ]]; then
       echo ""
       echo "ERROR: Anomaly scan found hits in the good-pool capture:" >&2
       echo "$ANOMALY_OUTPUT" >&2
@@ -198,7 +201,16 @@ else
     --config "$SVP_ROOT/scanner/zircolite/config/config.yaml" \
     --auditd --nolog 2>&1 || true)
 
-  if ! echo "$ZIRCOLITE_OUTPUT" | grep -q '"count"'; then
+  # Zircolite v3.7.6 outputs a rich table — check for non-zero detections
+  DET_COUNT=$(echo "$ZIRCOLITE_OUTPUT" | python3 -c "
+import sys, re
+text = sys.stdin.read()
+# Match 'Detections   N' in the summary box (N > 0)
+m = re.search(r'Detections\s+(\d+)', text)
+print(m.group(1) if m else '0')
+" 2>/dev/null || echo "0")
+
+  if [[ "$DET_COUNT" == "0" ]]; then
     echo ""
     echo "ERROR: reference rule produced zero detections on this sample." >&2
     echo "The sample does not represent T1071.004 or is in the wrong format." >&2
@@ -207,13 +219,6 @@ else
     echo "$ZIRCOLITE_OUTPUT" >&2
     exit 1
   fi
-
-  DET_COUNT=$(echo "$ZIRCOLITE_OUTPUT" | python3 -c "
-import sys, json, re
-text = sys.stdin.read()
-counts = re.findall(r'\"count\":\s*(\d+)', text)
-print(sum(int(c) for c in counts))
-" 2>/dev/null || echo "?")
   echo "  Reference rule fired: $DET_COUNT detection(s). Sample accepted."
 
   # ---------- copy to corpus ----------

@@ -1,0 +1,17 @@
+{
+  "system_type": "linux-server",
+  "os": "Ubuntu 22.04.5 LTS",
+  "domain_joined": false,
+  "logging_config": "Neo23x0 auditd watchpoints (svp_susp_activity.rules)",
+  "capture_method": "live capture",
+  "capture_date": "2026-06-14",
+  "capture_window": "12:11–12:11 UTC (10-min CI baseline)",
+  "events": 26,
+  "format": "auditd",
+  "pii_scrubbed": true,
+  "scrub_method": "ephemeral CI runner — no real user data; auid=UIDs are runner-assigned",
+  "reviewed_by": "gal.romano@cybereason.com",
+  "review_date": "2026-06-14",
+  "signed_off": true,
+  "notes": "Real capture replacing synthetic server-baseline. Same Neo23x0 watchpoints active as bad-pool detonation."
+}
