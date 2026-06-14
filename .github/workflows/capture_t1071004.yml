@@ -26,51 +26,89 @@ jobs:
           sleep 2
           sudo systemctl is-active auditd
 
-      - name: Load Neo23x0 C2-tool watchpoints
+      - name: Verify kernel audit subsystem is functional
         run: |
-          # Write rules with printf to avoid heredoc indentation issues
+          echo "=== auditctl -s (kernel audit status) ==="
+          sudo auditctl -s
+          echo ""
+          # Quick smoke-test: add a broad rule, run /bin/true, check if an event appears
+          sudo auditctl -a always,exit -F arch=b64 -S execve -k svp_smoke
+          /bin/true
+          sleep 1
+          SMOKE=$(sudo ausearch -k svp_smoke -ts recent 2>/dev/null || true)
+          if echo "$SMOKE" | grep -q 'svp_smoke'; then
+            echo "AUDIT_MODE=syscall" >> $GITHUB_ENV
+            echo "Kernel audit: WORKING via syscall rules"
+          else
+            echo "AUDIT_MODE=none" >> $GITHUB_ENV
+            echo "WARNING: kernel audit not generating events — will fall back to strace"
+          fi
+          sudo auditctl -D  # clear smoke-test rule
+
+      - name: Load watchpoints AND syscall rules
+        run: |
+          # Watchpoints (inode-based, may not work in all VM environments)
           printf '%s\n' \
             '-w /usr/bin/wget -p x -k susp_activity' \
             '-w /usr/bin/curl -p x -k susp_activity' \
             '-w /usr/bin/base64 -p x -k susp_activity' \
             '-w /bin/nc -p x -k susp_activity' \
-            '-w /bin/netcat -p x -k susp_activity' \
             '-w /usr/bin/ncat -p x -k susp_activity' \
-            '-w /usr/bin/ss -p x -k susp_activity' \
             '-w /usr/bin/ssh -p x -k susp_activity' \
-            '-w /usr/bin/socat -p x -k susp_activity' \
-            '-w /usr/bin/nmap -p x -k susp_activity' \
             | sudo tee /etc/audit/rules.d/svp_susp_activity.rules
-          # Load directly into running kernel (auditctl -R is immediate; augenrules --load is not)
+          # Syscall rules (execve-based, more likely to work in VMs)
+          printf '%s\n' \
+            '-a always,exit -F arch=b64 -S execve -F exe=/usr/bin/curl -k susp_activity' \
+            '-a always,exit -F arch=b64 -S execve -F exe=/usr/bin/wget -k susp_activity' \
+            '-a always,exit -F arch=b64 -S execve -F exe=/usr/bin/base64 -k susp_activity' \
+            '-a always,exit -F arch=b64 -S execve -F exe=/usr/bin/ncat -k susp_activity' \
+            '-a always,exit -F arch=b64 -S execve -F exe=/usr/bin/nc -k susp_activity' \
+            >> /tmp/svp_syscall.rules
           sudo auditctl -R /etc/audit/rules.d/svp_susp_activity.rules
+          cat /tmp/svp_syscall.rules | while read rule; do
+            sudo auditctl $rule 2>/dev/null || true
+          done
           sleep 1
-          echo "Active watchpoints:"
-          sudo auditctl -l | grep susp_activity
+          echo "Active rules:"
+          sudo auditctl -l
 
       - name: Record audit log position
         run: echo "BEFORE=$(sudo wc -l < /var/log/audit/audit.log)" >> $GITHUB_ENV
 
       - name: Detonate — execute C2 tools against TEST-NET (RFC 5737, never routes)
         run: |
-          # Tools are expected to fail (no connection) — auditd fires on exec, not on success
           curl  --max-time 2 --silent http://192.0.2.1/svp-test   || true
           wget  --timeout=2 -q -O /dev/null http://192.0.2.2/svp-test || true
           echo  "svp-detonation" | base64 > /dev/null
           nc    -w 1 192.0.2.3 4444 < /dev/null                    || true
           ncat  --send-only --idle-timeout 1 192.0.2.4 4444 < /dev/null || true
-          sleep 1
+          sleep 2
 
       - name: Extract susp_activity events
         run: |
-          sudo tail -n +$(( $BEFORE + 1 )) /var/log/audit/audit.log \
-            | grep 'key=susp_activity' \
-            > /tmp/detonation.log || true
+          echo "=== All new audit.log lines after detonation ==="
+          sudo tail -n +$(( $BEFORE + 1 )) /var/log/audit/audit.log | head -40 || true
+          echo ""
+          echo "=== ausearch for susp_activity ==="
+          sudo ausearch -k susp_activity -ts recent 2>/dev/null || true
+          echo ""
+
+          # Try ausearch first, fall back to grep on raw log
+          AUSEARCH_RESULT=$(sudo ausearch -k susp_activity -ts recent 2>/dev/null || true)
+          if echo "$AUSEARCH_RESULT" | grep -q 'susp_activity'; then
+            echo "$AUSEARCH_RESULT" > /tmp/detonation.log
+          else
+            sudo tail -n +$(( $BEFORE + 1 )) /var/log/audit/audit.log \
+              | grep -E 'key="?susp_activity"?' \
+              > /tmp/detonation.log || true
+          fi
 
           EVENT_COUNT=$(wc -l < /tmp/detonation.log)
           echo "Captured $EVENT_COUNT event(s)"
 
           if [[ "$EVENT_COUNT" -eq 0 ]]; then
-            echo "ERROR: no susp_activity events captured — watchpoints may not have loaded in time"
+            echo "ERROR: no susp_activity events captured"
+            echo "Total new audit lines: $(sudo tail -n +$(( $BEFORE + 1 )) /var/log/audit/audit.log | wc -l)"
             exit 1
           fi
 
@@ -104,8 +142,9 @@ jobs:
             /tmp/detonation.log
             /tmp/detonation.meta
 
-  # ── Job 2: good-pool baseline ──────────────────────────────────────────────
+  # ── Job 2: good-pool baseline (already captured — disabled) ───────────────
   good-pool:
+    if: false
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
