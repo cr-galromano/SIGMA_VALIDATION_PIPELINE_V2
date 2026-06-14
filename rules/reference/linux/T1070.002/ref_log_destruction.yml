@@ -1,0 +1,20 @@
+title: "[REF] Log Destruction via shred"
+id: d6f1a4c5-0e7b-4d2f-1b5a-4a8f9e0d1b2a
+status: stable
+description: |
+  REFERENCE RULE — for bad-pool sample acceptance only. Not an evaluation rule.
+  Fires on any execution of shred (secure file deletion, commonly used to
+  destroy log files), tagged with key=log_destruction.
+author: svp-sandbox
+date: 2026-06-14
+tags:
+    - attack.defense-evasion
+    - attack.t1070.002
+logsource:
+    product: linux
+    service: auditd
+detection:
+    selection:
+        key: 'log_destruction'
+    condition: selection
+level: informational

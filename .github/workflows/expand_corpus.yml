@@ -1,0 +1,336 @@
+name: SVP — Corpus Expansion (Phase 1.5)
+
+# Triggers once when this file is pushed.
+# Each job captures a separate technique's bad-pool samples or a good-pool baseline.
+# Artifacts are downloaded and ingested locally via: python scripts/ingest.py
+on:
+  push:
+    paths:
+      - '.github/workflows/expand_corpus.yml'
+
+# ── helpers ────────────────────────────────────────────────────────────────────
+# All Linux jobs share the same watchpoint-load + capture pattern.
+# Each job uses its own auditd key so samples can be technique-matched precisely.
+
+jobs:
+
+  # ── T1003.008: /etc/shadow access ─────────────────────────────────────────
+  linux-t1003008:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install auditd
+        run: sudo apt-get update -qq && sudo apt-get install -y auditd && sudo systemctl start auditd && sleep 2
+
+      - name: Load watchpoints
+        run: |
+          printf '%s\n' \
+            '-w /etc/shadow -p r -k credential_access' \
+            '-w /etc/passwd -p r -k credential_access' \
+            | sudo tee /etc/audit/rules.d/svp_t1003008.rules
+          sudo auditctl -R /etc/audit/rules.d/svp_t1003008.rules
+          sleep 1 && echo "Rules:" && sudo auditctl -l | grep credential_access
+
+      - name: Record log position
+        run: echo "BEFORE=$(sudo wc -l < /var/log/audit/audit.log)" >> $GITHUB_ENV
+
+      - name: Detonate — read /etc/shadow
+        run: |
+          sudo cat /etc/shadow > /dev/null 2>&1 || true
+          sudo cat /etc/passwd > /dev/null 2>&1 || true
+          sudo grep root /etc/shadow > /dev/null 2>&1 || true
+          sleep 1
+
+      - name: Extract events
+        run: |
+          sudo tail -n +$(( $BEFORE + 1 )) /var/log/audit/audit.log \
+            | grep 'key="credential_access"\|key=credential_access' > /tmp/t1003008.log || true
+          COUNT=$(wc -l < /tmp/t1003008.log)
+          echo "Captured $COUNT event(s)"
+          [[ "$COUNT" -gt 0 ]] || { echo "ERROR: no events captured"; exit 1; }
+          cat /tmp/t1003008.log
+
+      - name: Write meta
+        run: |
+          OS=$(. /etc/os-release && echo "$PRETTY_NAME")
+          COUNT=$(wc -l < /tmp/t1003008.log)
+          cat > /tmp/t1003008.meta <<EOF
+          FILE: corpora/v2026.06.1/bad-pool/linux/T1003.008/shadow_access.log
+          TECHNIQUE: T1003.008
+          TECHNIQUE_NAME: OS Credential Dumping: /etc/passwd
+          TACTIC: credential-access
+          PLATFORM: linux
+          FORMAT: auditd
+          SOURCE: detonation
+          EVENTS: $COUNT
+          TOOLS_RUN: cat grep
+          HOST: github-actions-runner
+          OS: $OS
+          CAPTURE_DATE: $(date +%Y-%m-%d)
+          SIGNED_OFF_BY: gal.romano@cybereason.com
+          SIGN_OFF_DATE: $(date +%Y-%m-%d)
+          PII_SCRUB_METHOD: ephemeral CI runner — no real user data
+          REFERENCE_RULE: rules/reference/linux/T1003.008/ref_shadow_file_access.yml
+          EOF
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-t1003008
+          path: /tmp/t1003008.*
+
+  # ── T1136.001: Local account creation ────────────────────────────────────
+  linux-t1136001:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install auditd
+        run: sudo apt-get update -qq && sudo apt-get install -y auditd && sudo systemctl start auditd && sleep 2
+
+      - name: Load watchpoints
+        run: |
+          printf '%s\n' \
+            '-w /usr/sbin/useradd -p x -k account_creation' \
+            '-w /usr/sbin/adduser -p x -k account_creation' \
+            '-w /usr/sbin/userdel -p x -k account_creation' \
+            | sudo tee /etc/audit/rules.d/svp_t1136001.rules
+          sudo auditctl -R /etc/audit/rules.d/svp_t1136001.rules
+          sleep 1 && sudo auditctl -l | grep account_creation
+
+      - name: Record log position
+        run: echo "BEFORE=$(sudo wc -l < /var/log/audit/audit.log)" >> $GITHUB_ENV
+
+      - name: Detonate — create and delete a local account
+        run: |
+          sudo useradd -M -s /bin/false svptest 2>/dev/null || true
+          sudo userdel svptest 2>/dev/null || true
+          sleep 1
+
+      - name: Extract events
+        run: |
+          sudo tail -n +$(( $BEFORE + 1 )) /var/log/audit/audit.log \
+            | grep 'key="account_creation"\|key=account_creation' > /tmp/t1136001.log || true
+          COUNT=$(wc -l < /tmp/t1136001.log)
+          echo "Captured $COUNT event(s)"
+          [[ "$COUNT" -gt 0 ]] || { echo "ERROR: no events captured"; exit 1; }
+
+      - name: Write meta
+        run: |
+          OS=$(. /etc/os-release && echo "$PRETTY_NAME")
+          COUNT=$(wc -l < /tmp/t1136001.log)
+          cat > /tmp/t1136001.meta <<EOF
+          FILE: corpora/v2026.06.1/bad-pool/linux/T1136.001/account_creation.log
+          TECHNIQUE: T1136.001
+          TECHNIQUE_NAME: Create Account: Local Account
+          TACTIC: persistence
+          PLATFORM: linux
+          FORMAT: auditd
+          SOURCE: detonation
+          EVENTS: $COUNT
+          TOOLS_RUN: useradd userdel
+          HOST: github-actions-runner
+          OS: $OS
+          CAPTURE_DATE: $(date +%Y-%m-%d)
+          SIGNED_OFF_BY: gal.romano@cybereason.com
+          SIGN_OFF_DATE: $(date +%Y-%m-%d)
+          PII_SCRUB_METHOD: ephemeral CI runner — no real user data
+          REFERENCE_RULE: rules/reference/linux/T1136.001/ref_account_creation.yml
+          EOF
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-t1136001
+          path: /tmp/t1136001.*
+
+  # ── T1053.003: Cron job modification ─────────────────────────────────────
+  linux-t1053003:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install auditd
+        run: sudo apt-get update -qq && sudo apt-get install -y auditd && sudo systemctl start auditd && sleep 2
+
+      - name: Load watchpoints
+        run: |
+          printf '%s\n' \
+            '-w /usr/bin/crontab -p x -k cron_mod' \
+            '-w /etc/cron.d -p wa -k cron_mod' \
+            '-w /etc/crontab -p wa -k cron_mod' \
+            | sudo tee /etc/audit/rules.d/svp_t1053003.rules
+          sudo auditctl -R /etc/audit/rules.d/svp_t1053003.rules
+          sleep 1 && sudo auditctl -l | grep cron_mod
+
+      - name: Record log position
+        run: echo "BEFORE=$(sudo wc -l < /var/log/audit/audit.log)" >> $GITHUB_ENV
+
+      - name: Detonate — add and remove a cron job
+        run: |
+          crontab -l 2>/dev/null | cat || true
+          (crontab -l 2>/dev/null; echo "@reboot echo svp-test") | crontab - 2>/dev/null || true
+          crontab -l 2>/dev/null || true
+          crontab -r 2>/dev/null || true
+          sleep 1
+
+      - name: Extract events
+        run: |
+          sudo tail -n +$(( $BEFORE + 1 )) /var/log/audit/audit.log \
+            | grep 'key="cron_mod"\|key=cron_mod' > /tmp/t1053003.log || true
+          COUNT=$(wc -l < /tmp/t1053003.log)
+          echo "Captured $COUNT event(s)"
+          [[ "$COUNT" -gt 0 ]] || { echo "ERROR: no events captured"; exit 1; }
+
+      - name: Write meta
+        run: |
+          OS=$(. /etc/os-release && echo "$PRETTY_NAME")
+          COUNT=$(wc -l < /tmp/t1053003.log)
+          cat > /tmp/t1053003.meta <<EOF
+          FILE: corpora/v2026.06.1/bad-pool/linux/T1053.003/cron_modification.log
+          TECHNIQUE: T1053.003
+          TECHNIQUE_NAME: Scheduled Task/Job: Cron
+          TACTIC: persistence
+          PLATFORM: linux
+          FORMAT: auditd
+          SOURCE: detonation
+          EVENTS: $COUNT
+          TOOLS_RUN: crontab
+          HOST: github-actions-runner
+          OS: $OS
+          CAPTURE_DATE: $(date +%Y-%m-%d)
+          SIGNED_OFF_BY: gal.romano@cybereason.com
+          SIGN_OFF_DATE: $(date +%Y-%m-%d)
+          PII_SCRUB_METHOD: ephemeral CI runner — no real user data
+          REFERENCE_RULE: rules/reference/linux/T1053.003/ref_cron_modification.yml
+          EOF
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-t1053003
+          path: /tmp/t1053003.*
+
+  # ── T1070.002: Log destruction via shred ──────────────────────────────────
+  linux-t1070002:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install auditd + shred
+        run: sudo apt-get update -qq && sudo apt-get install -y auditd coreutils && sudo systemctl start auditd && sleep 2
+
+      - name: Load watchpoints
+        run: |
+          printf '%s\n' \
+            '-w /usr/bin/shred -p x -k log_destruction' \
+            | sudo tee /etc/audit/rules.d/svp_t1070002.rules
+          sudo auditctl -R /etc/audit/rules.d/svp_t1070002.rules
+          sleep 1 && sudo auditctl -l | grep log_destruction
+
+      - name: Record log position
+        run: echo "BEFORE=$(sudo wc -l < /var/log/audit/audit.log)" >> $GITHUB_ENV
+
+      - name: Detonate — shred a decoy log file
+        run: |
+          echo "decoy log content" > /tmp/svp_decoy.log
+          shred -u /tmp/svp_decoy.log 2>/dev/null || true
+          echo "another decoy" > /tmp/svp_decoy2.log
+          shred -n 3 /tmp/svp_decoy2.log 2>/dev/null || true
+          sleep 1
+
+      - name: Extract events
+        run: |
+          sudo tail -n +$(( $BEFORE + 1 )) /var/log/audit/audit.log \
+            | grep 'key="log_destruction"\|key=log_destruction' > /tmp/t1070002.log || true
+          COUNT=$(wc -l < /tmp/t1070002.log)
+          echo "Captured $COUNT event(s)"
+          [[ "$COUNT" -gt 0 ]] || { echo "ERROR: no events captured"; exit 1; }
+
+      - name: Write meta
+        run: |
+          OS=$(. /etc/os-release && echo "$PRETTY_NAME")
+          COUNT=$(wc -l < /tmp/t1070002.log)
+          cat > /tmp/t1070002.meta <<EOF
+          FILE: corpora/v2026.06.1/bad-pool/linux/T1070.002/log_destruction.log
+          TECHNIQUE: T1070.002
+          TECHNIQUE_NAME: Indicator Removal: Clear Linux or Mac System Logs
+          TACTIC: defense-evasion
+          PLATFORM: linux
+          FORMAT: auditd
+          SOURCE: detonation
+          EVENTS: $COUNT
+          TOOLS_RUN: shred
+          HOST: github-actions-runner
+          OS: $OS
+          CAPTURE_DATE: $(date +%Y-%m-%d)
+          SIGNED_OFF_BY: gal.romano@cybereason.com
+          SIGN_OFF_DATE: $(date +%Y-%m-%d)
+          PII_SCRUB_METHOD: ephemeral CI runner — no real user data
+          REFERENCE_RULE: rules/reference/linux/T1070.002/ref_log_destruction.yml
+          EOF
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-t1070002
+          path: /tmp/t1070002.*
+
+  # ── Windows good pool: Sysmon baseline ────────────────────────────────────
+  windows-good-pool:
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download and install Sysmon with SwiftOnSecurity config
+        shell: pwsh
+        run: |
+          Invoke-WebRequest -Uri "https://download.sysinternals.com/files/Sysmon.zip" `
+            -OutFile "$env:TEMP\Sysmon.zip" -UseBasicParsing
+          Expand-Archive -Path "$env:TEMP\Sysmon.zip" -DestinationPath "$env:TEMP\Sysmon" -Force
+          Invoke-WebRequest `
+            -Uri "https://raw.githubusercontent.com/SwiftOnSecurity/sysmon-config/master/sysmonconfig-export.xml" `
+            -OutFile "$env:TEMP\sysmon-config.xml" -UseBasicParsing
+          & "$env:TEMP\Sysmon\Sysmon64.exe" -accepteula -i "$env:TEMP\sysmon-config.xml"
+          Start-Sleep -Seconds 5
+          Write-Host "Sysmon installed and running"
+
+      - name: Capture 5-minute baseline
+        shell: pwsh
+        run: |
+          Write-Host "Capturing baseline — start: $(Get-Date -Format 'HH:mm UTC')"
+          Start-Sleep -Seconds 300
+          Write-Host "Baseline capture complete — end: $(Get-Date -Format 'HH:mm UTC')"
+
+      - name: Export Sysmon EVTX
+        shell: cmd
+        run: wevtutil epl "Microsoft-Windows-Sysmon/Operational" "%TEMP%\sysmon_baseline.evtx"
+
+      - name: Count events and write meta
+        shell: pwsh
+        run: |
+          $count = 0
+          try {
+            $count = (Get-WinEvent -Path "$env:TEMP\sysmon_baseline.evtx" -ErrorAction Stop | Measure-Object).Count
+          } catch { $count = 0 }
+          $os = (Get-WmiObject Win32_OperatingSystem).Caption
+          $startTime = (Get-Date).AddMinutes(-5).ToUniversalTime().ToString("HH:mm")
+          $endTime = (Get-Date).ToUniversalTime().ToString("HH:mm")
+          @"
+          FILE: good-pool/windows/github-actions-baseline/sysmon_baseline.evtx
+          POOL: good
+          PLATFORM: windows
+          FORMAT: evtx
+          EVENTS: $count
+          HOST: github-actions-runner
+          OS: $os
+          DOMAIN_JOINED: false
+          LOGGING_CONFIG: Sysmon with SwiftOnSecurity sysmonconfig-export.xml
+          CAPTURE_DATE: $(Get-Date -Format 'yyyy-MM-dd')
+          CAPTURE_WINDOW: $startTime–$endTime UTC (5-min CI baseline)
+          REVIEWED_BY: gal.romano@cybereason.com
+          REVIEW_DATE: $(Get-Date -Format 'yyyy-MM-dd')
+          PII_SCRUB_METHOD: ephemeral CI runner — no real user data; hostname is runner-assigned
+          NOTES: 5-minute GitHub Actions Windows Server 2022 baseline with Sysmon SwiftOnSecurity config.
+          "@ | Out-File -FilePath "$env:TEMP\windows_good_pool.meta" -Encoding utf8
+          Write-Host "Events captured: $count"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-good-pool
+          path: |
+            ${{ env.TEMP }}\sysmon_baseline.evtx
+            ${{ env.TEMP }}\windows_good_pool.meta

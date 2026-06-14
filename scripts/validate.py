@@ -47,7 +47,8 @@ FORMAT_CORPUS_FORMAT = {"auditd": "auditd", "sysmon4linux": "sysmon-linux",
                         "windows": "sysmon-json"}
 FORMAT_ANCHOR_KEY    = {"auditd": "auditd", "sysmon4linux": "sysmon-linux",
                         "windows": "windows-sysmon"}
-FORMAT_LOG_GLOB      = {"auditd": "*.log", "sysmon4linux": "*.log", "windows": "*.json"}
+FORMAT_LOG_GLOBS     = {"auditd": ["*.log"], "sysmon4linux": ["*.log"],
+                        "windows": ["*.json", "*.evtx"]}
 
 
 def resolve_logsource(logsource: dict):
@@ -349,7 +350,7 @@ def check_good_pool(rule_path: str, manifest: dict, manifest_path: Path,
                     format_tag: str, extra_flags: list, warnings: list) -> tuple:
     corpus_dir = manifest_path.parent
     platform   = FORMAT_PLATFORM[format_tag]
-    log_glob   = FORMAT_LOG_GLOB[format_tag]
+    log_globs  = FORMAT_LOG_GLOBS[format_tag]
     entries    = manifest.get("good_pool", {}).get(platform, [])
 
     log_dirs = []
@@ -377,7 +378,7 @@ def check_good_pool(rule_path: str, manifest: dict, manifest_path: Path,
     offenders, total_hits, files_tested, void_triggered = [], 0, 0, False
 
     for log_dir in log_dirs:
-        log_files = [f for f in log_dir.glob(log_glob)
+        log_files = [f for glob in log_globs for f in log_dir.glob(glob)
                      if f.name != "provenance.json"]
         for lf in log_files:
             files_tested += 1

@@ -1,0 +1,19 @@
+title: "[REF] Local Account Creation via useradd"
+id: b4d9e2a3-8c5f-4b0d-9f3e-2e6d7c8b9f0e
+status: stable
+description: |
+  REFERENCE RULE — for bad-pool sample acceptance only. Not an evaluation rule.
+  Fires on any execution of useradd/adduser, tagged with key=account_creation.
+author: svp-sandbox
+date: 2026-06-14
+tags:
+    - attack.persistence
+    - attack.t1136.001
+logsource:
+    product: linux
+    service: auditd
+detection:
+    selection:
+        key: 'account_creation'
+    condition: selection
+level: informational

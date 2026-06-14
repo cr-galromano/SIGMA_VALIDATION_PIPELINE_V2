@@ -1,0 +1,21 @@
+title: "[REF] /etc/shadow File Access"
+id: a3c8d1f2-7b4e-4a9c-8e2f-1d5c6b7a8e9f
+status: stable
+description: |
+  REFERENCE RULE — for bad-pool sample acceptance only. Not an evaluation rule.
+  Fires on any read/write access to /etc/shadow, tagged with key=credential_access
+  by the auditd watchpoint. Broader than evaluation rules.
+  Rules in rules/reference/ are never submitted for evaluation.
+author: svp-sandbox
+date: 2026-06-14
+tags:
+    - attack.credential-access
+    - attack.t1003.008
+logsource:
+    product: linux
+    service: auditd
+detection:
+    selection:
+        key: 'credential_access'
+    condition: selection
+level: informational
