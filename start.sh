@@ -11,7 +11,7 @@ echo ""
 
 # API (background)
 source "$ROOT/venv/bin/activate"
-uvicorn api.main:app --reload --port 8000 --app-dir "$ROOT" &
+cd "$ROOT" && uvicorn api.main:app --reload --port 8000 &
 API_PID=$!
 
 # Frontend
