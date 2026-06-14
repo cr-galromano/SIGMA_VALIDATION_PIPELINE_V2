@@ -1,25 +1,22 @@
 #!/usr/bin/env python3
 """
-SVP Validation Service — Phase 2
+SVP Validation Service — Phase 2 + 3
 
-Takes a SIGMA rule and runs it against the corpus to produce a
-PASS / FAIL / VOID verdict.
+Public API:
+    validate(rule_path, corpus_version="v2026.06.1") -> dict
+    lint_rule(rule_path) -> list[dict]
 
-Usage:
-    python scripts/validate.py <rule.yml>
-    python scripts/validate.py <rule.yml> --corpus-version v2026.06.1
+CLI:
+    python scripts/validate.py <rule.yml> [--corpus-version v2026.06.1]
 
-Exit codes:
-    0 = PASS    rule fires on bad pool, silent on good pool
-    1 = FAIL    rule misses technique OR fires on benign data
-    2 = VOID    run was inconclusive (broken pipeline, unsigned corpus, etc.)
-    3 = error   setup / configuration problem
+Exit codes: 0=PASS  1=FAIL  2=VOID  3=error
 """
 import sys
 import re
 import json
 import subprocess
 import argparse
+import tempfile
 from pathlib import Path
 from datetime import datetime, timezone
 
@@ -36,30 +33,21 @@ EXIT_VOID  = 2
 EXIT_ERROR = 3
 
 # ── logsource routing ──────────────────────────────────────────────────────────
-# (product, service_or_None) → (format_tag, extra_cli_flags)
 LOGSOURCE_MAP = {
-    ("linux",   "auditd"): ("auditd",      ["--auditd"]),
-    ("linux",   "sysmon"): ("sysmon4linux", ["--sysmon4linux"]),
-    ("linux",   None):     ("sysmon4linux", ["--sysmon4linux"]),
-    ("windows", "sysmon"): ("windows",     ["--pipeline", "sysmon",
-                                             "--pipeline", "windows-logsources"]),
-    ("windows", None):     ("windows",     ["--pipeline", "sysmon",
-                                             "--pipeline", "windows-logsources"]),
+    ("linux",   "auditd"): ("auditd",       ["--auditd"]),
+    ("linux",   "sysmon"): ("sysmon4linux",  ["--sysmon4linux"]),
+    ("linux",   None):     ("sysmon4linux",  ["--sysmon4linux"]),
+    ("windows", "sysmon"): ("windows",      ["--pipeline", "sysmon",
+                                              "--pipeline", "windows-logsources"]),
+    ("windows", None):     ("windows",      ["--pipeline", "sysmon",
+                                              "--pipeline", "windows-logsources"]),
 }
-
-# format_tag → manifest platform key ("linux" / "windows")
-FORMAT_PLATFORM = {"auditd": "linux", "sysmon4linux": "linux", "windows": "windows"}
-
-# format_tag → manifest "format" values used in bad-pool technique entries
+FORMAT_PLATFORM      = {"auditd": "linux", "sysmon4linux": "linux", "windows": "windows"}
 FORMAT_CORPUS_FORMAT = {"auditd": "auditd", "sysmon4linux": "sysmon-linux",
                         "windows": "sysmon-json"}
-
-# format_tag → anchor "logsource" key in manifest controls section
-FORMAT_ANCHOR_KEY = {"auditd": "auditd", "sysmon4linux": "sysmon-linux",
-                     "windows": "windows-sysmon"}
-
-# format_tag → glob pattern for log files in good-pool directories
-FORMAT_LOG_GLOB = {"auditd": "*.log", "sysmon4linux": "*.log", "windows": "*.json"}
+FORMAT_ANCHOR_KEY    = {"auditd": "auditd", "sysmon4linux": "sysmon-linux",
+                        "windows": "windows-sysmon"}
+FORMAT_LOG_GLOB      = {"auditd": "*.log", "sysmon4linux": "*.log", "windows": "*.json"}
 
 
 def resolve_logsource(logsource: dict):
@@ -73,7 +61,7 @@ def resolve_logsource(logsource: dict):
 
 # ── Zircolite wrapper ──────────────────────────────────────────────────────────
 _ANSI_RE = re.compile(r'\x1b\[[0-9;]*m')
-_RICH_RE  = re.compile(r'\[[^\]]{1,40}\]')   # strip Rich markup tags
+_RICH_RE  = re.compile(r'\[[^\]]{1,40}\]')
 
 def _strip(text: str) -> str:
     return _RICH_RE.sub('', _ANSI_RE.sub('', text))
@@ -84,19 +72,15 @@ def _int(s: str) -> int:
 def _parse(raw: str) -> dict:
     text = _strip(raw)
     rules = events = detections = 0
-
     m = re.search(r'Converted\s+([\d,]+)\s+rules', text)
     if m:
         rules = _int(m.group(1))
-
     m = re.search(r'Total events processed:\s*([\d,]+)', text)
     if m:
         events = _int(m.group(1))
-
     m = re.search(r'Detections\s+([\d,]+)', text)
     if m:
         detections = _int(m.group(1))
-
     return {"rules_converted": rules, "events_processed": events, "detections": detections}
 
 
@@ -140,6 +124,8 @@ def parse_rule(rule_path: str) -> dict:
         "title":     rule.get("title", ""),
         "logsource": rule.get("logsource") or {},
         "tags":      rule.get("tags") or [],
+        "status":    rule.get("status", ""),
+        "level":     rule.get("level", ""),
     }
 
 
@@ -153,6 +139,83 @@ def extract_techniques(tags: list) -> list:
                 seen.add(tech)
                 out.append(tech)
     return out
+
+
+# ── Phase 3: lint ──────────────────────────────────────────────────────────────
+def lint_rule(rule_path: str) -> list:
+    """
+    Return a list of lint issues for a SIGMA rule.
+    Each issue: {"severity": "error"|"warning"|"info", "code": str, "message": str}
+    """
+    import yaml
+    issues = []
+
+    try:
+        with open(rule_path) as f:
+            rule = yaml.safe_load(f)
+    except Exception as exc:
+        return [{"severity": "error", "code": "PARSE_ERROR",
+                 "message": f"Failed to parse YAML: {exc}"}]
+
+    if not rule:
+        return [{"severity": "error", "code": "EMPTY_RULE",
+                 "message": "Rule file is empty or contains no YAML"}]
+
+    # Required fields
+    for field in ("id", "title", "description", "logsource", "detection"):
+        if not rule.get(field):
+            issues.append({"severity": "error", "code": f"MISSING_{field.upper()}",
+                           "message": f"Required field '{field}' is missing or empty"})
+
+    # ID format (should be UUID)
+    rule_id = rule.get("id", "")
+    if rule_id and not re.match(
+        r'^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$',
+        str(rule_id), re.IGNORECASE
+    ):
+        issues.append({"severity": "warning", "code": "INVALID_ID_FORMAT",
+                       "message": f"Rule ID '{rule_id}' is not a valid UUID"})
+
+    # Deprecated status
+    if rule.get("status") == "deprecated":
+        issues.append({"severity": "error", "code": "DEPRECATED",
+                       "message": "Rule status is 'deprecated'"})
+
+    # Logsource
+    logsource = rule.get("logsource") or {}
+    if logsource and not logsource.get("product"):
+        issues.append({"severity": "warning", "code": "MISSING_LOGSOURCE_PRODUCT",
+                       "message": "logsource.product is not set"})
+    if logsource and not logsource.get("service") and not logsource.get("category"):
+        issues.append({"severity": "info", "code": "MISSING_LOGSOURCE_SERVICE",
+                       "message": "logsource.service and logsource.category are both unset"})
+
+    # Tags / ATT&CK
+    tags = rule.get("tags") or []
+    techniques = extract_techniques(tags)
+    if not tags:
+        issues.append({"severity": "warning", "code": "NO_TAGS",
+                       "message": "Rule has no tags — ATT&CK technique mapping is missing"})
+    elif not techniques:
+        issues.append({"severity": "warning", "code": "NO_ATTACK_TECHNIQUE",
+                       "message": "Tags present but no ATT&CK technique IDs found (expected attack.tXXXX)"})
+
+    # Level
+    valid_levels = {"critical", "high", "medium", "low", "informational"}
+    level = rule.get("level", "")
+    if not level:
+        issues.append({"severity": "warning", "code": "MISSING_LEVEL",
+                       "message": "Rule level is not set"})
+    elif level.lower() not in valid_levels:
+        issues.append({"severity": "warning", "code": "INVALID_LEVEL",
+                       "message": f"Unknown level '{level}' — expected one of {sorted(valid_levels)}"})
+
+    # False positives
+    if not rule.get("falsepositives"):
+        issues.append({"severity": "info", "code": "NO_FALSEPOSITIVES",
+                       "message": "No falsepositives field — consider documenting known FPs"})
+
+    return issues
 
 
 # ── positive controls ──────────────────────────────────────────────────────────
@@ -170,10 +233,8 @@ def check_controls(manifest: dict, manifest_path: Path, format_tag: str,
         anchor_file = (manifest_dir / a["file"]).resolve()
         anchor_rule = (manifest_dir / a["rule"]).resolve()
         expected    = a["expected_detections"]
-
-        zr, err = run_zircolite(str(anchor_rule), str(anchor_file), extra_flags)
-        voided  = err or is_void(zr) or zr["detections"] < expected
-
+        zr, err     = run_zircolite(str(anchor_rule), str(anchor_file), extra_flags)
+        voided      = bool(err or is_void(zr) or zr["detections"] < expected)
         if voided:
             void_triggered = True
         checks.append({
@@ -195,17 +256,22 @@ def check_controls(manifest: dict, manifest_path: Path, format_tag: str,
 def check_bad_pool(rule_path: str, manifest: dict, manifest_path: Path,
                    techniques: list, format_tag: str, extra_flags: list,
                    warnings: list) -> tuple:
-    manifest_dir   = manifest_path.parent
-    platform       = FORMAT_PLATFORM[format_tag]
-    corpus_format  = FORMAT_CORPUS_FORMAT[format_tag]
-    platform_pool  = manifest.get("bad_pool", {}).get(platform, {})
+    manifest_dir  = manifest_path.parent
+    platform      = FORMAT_PLATFORM[format_tag]
+    corpus_format = FORMAT_CORPUS_FORMAT[format_tag]
+    platform_pool = manifest.get("bad_pool", {}).get(platform, {})
 
-    samples = []
-    if not techniques:
-        for tdata in platform_pool.values():
+    # Build sample list; when rule is untagged scan everything for inference
+    untagged = not techniques
+    samples_by_tech: dict = {}  # tech → [sample, ...]
+
+    if untagged:
+        for tech, tdata in platform_pool.items():
             if tdata.get("format") == corpus_format:
-                samples += [s for s in tdata.get("samples", [])
+                verified = [s for s in tdata.get("samples", [])
                             if s.get("reference_rule_verified")]
+                if verified:
+                    samples_by_tech[tech] = verified
     else:
         for tech in techniques:
             tdata = platform_pool.get(tech)
@@ -223,21 +289,28 @@ def check_bad_pool(rule_path: str, manifest: dict, manifest_path: Path,
             skipped  = len(tdata.get("samples", [])) - len(verified)
             if skipped:
                 warnings.append(f"Skipped {skipped} unverified sample(s) in {tech}")
-            samples += verified
+            if verified:
+                samples_by_tech[tech] = verified
 
-    if not samples:
+    all_samples = [(tech, s) for tech, ss in samples_by_tech.items() for s in ss]
+
+    if not all_samples:
         return {
             "result": "FAIL",
-            "reason": f"No verified bad-pool samples for technique(s): "
-                      f"{techniques or 'untagged rule'}",
+            "reason": (
+                f"No verified bad-pool samples for technique(s): "
+                f"{techniques or 'untagged rule'}"
+            ),
             "samples_tested": 0,
             "total_detections": 0,
             "hits": [],
+            "inferred_techniques": [],
         }, False
 
     hits, total, void_triggered = [], 0, False
+    inferred: set = set()
 
-    for s in samples:
+    for tech, s in all_samples:
         spath = (manifest_dir / s["file"]).resolve()
         if not spath.exists():
             warnings.append(f"Missing sample: {s['file']}")
@@ -251,14 +324,24 @@ def check_bad_pool(rule_path: str, manifest: dict, manifest_path: Path,
         total += zr["detections"]
         if zr["detections"] > 0:
             hits.append({"file": s["file"], "detections": zr["detections"]})
+            if untagged:
+                inferred.add(tech)
 
     result = "PASS" if total > 0 else "FAIL"
-    return {
+    out = {
         "result": result,
-        "samples_tested": len(samples),
+        "samples_tested": len(all_samples),
         "total_detections": total,
         "hits": hits,
-    }, void_triggered
+    }
+    if untagged:
+        out["inferred_techniques"] = sorted(inferred)
+        if inferred:
+            warnings.append(
+                f"Inferred techniques from bad-pool hits: {sorted(inferred)} "
+                f"— add these as tags and re-run for a confirmed verdict"
+            )
+    return out, void_triggered
 
 
 # ── good pool ──────────────────────────────────────────────────────────────────
@@ -271,10 +354,9 @@ def check_good_pool(rule_path: str, manifest: dict, manifest_path: Path,
 
     log_dirs = []
     for entry in entries:
-        prov_rel = entry.get("provenance", "")
-        prov_path = (corpus_dir / prov_rel).resolve()
+        prov_path = (corpus_dir / entry.get("provenance", "")).resolve()
         if not prov_path.exists():
-            warnings.append(f"Provenance file missing: {prov_rel}")
+            warnings.append(f"Provenance file missing: {entry.get('provenance')}")
             continue
         with open(prov_path) as f:
             prov = json.load(f)
@@ -302,7 +384,8 @@ def check_good_pool(rule_path: str, manifest: dict, manifest_path: Path,
             zr, err = run_zircolite(rule_path, str(lf), extra_flags)
             if err or is_void(zr):
                 void_triggered = True
-                warnings.append(f"VOID on good-pool {lf.name}: {err or 'rules/events=0'}")
+                warnings.append(
+                    f"VOID on good-pool {lf.name}: {err or 'rules/events=0'}")
                 continue
             total_hits += zr["detections"]
             if zr["detections"] > 0:
@@ -320,49 +403,55 @@ def check_good_pool(rule_path: str, manifest: dict, manifest_path: Path,
     }, void_triggered
 
 
-# ── main ───────────────────────────────────────────────────────────────────────
-def main():
-    parser = argparse.ArgumentParser(description="SVP SIGMA rule validator")
-    parser.add_argument("rule", help="Path to a SIGMA rule YAML file")
-    parser.add_argument("--corpus-version", default="v2026.06.1",
-                        help="Corpus version to validate against")
-    args = parser.parse_args()
-
-    warnings = []
+# ── public API ─────────────────────────────────────────────────────────────────
+def validate(rule_path: str, corpus_version: str = "v2026.06.1") -> dict:
+    """
+    Validate a SIGMA rule against the corpus.
+    Returns a verdict dict suitable for JSON serialisation.
+    Does NOT call sys.exit() — safe to import and call from other modules.
+    """
+    warnings: list = []
 
     try:
-        manifest, manifest_path = load_manifest(args.corpus_version)
-        rule = parse_rule(args.rule)
+        manifest, manifest_path = load_manifest(corpus_version)
+        rule = parse_rule(rule_path)
     except Exception as exc:
-        out = {"verdict": "VOID", "reason": str(exc),
-               "timestamp": datetime.now(timezone.utc).isoformat()}
-        print(json.dumps(out, indent=2))
-        return EXIT_ERROR
+        return {
+            "verdict": "VOID",
+            "reason": str(exc),
+            "timestamp": datetime.now(timezone.utc).isoformat(),
+        }
 
     format_tag, extra_flags = resolve_logsource(rule["logsource"])
     if format_tag is None:
-        out = {
-            "verdict": "VOID",
-            "reason": f"Unsupported logsource: {rule['logsource']}",
-            "rule_id": rule["id"], "rule_title": rule["title"],
-            "timestamp": datetime.now(timezone.utc).isoformat(),
+        return {
+            "rule_id":    rule["id"],
+            "rule_title": rule["title"],
+            "rule_file":  rule_path,
+            "verdict":    "VOID",
+            "reason":     f"Unsupported logsource: {rule['logsource']}",
+            "timestamp":  datetime.now(timezone.utc).isoformat(),
         }
-        print(json.dumps(out, indent=2))
-        return EXIT_VOID
 
     techniques = extract_techniques(rule["tags"])
     if not techniques:
-        warnings.append("Rule has no ATT&CK technique tags — corpus matching may be incomplete")
+        warnings.append(
+            "Rule has no ATT&CK technique tags — running against all "
+            "bad-pool samples to infer technique coverage"
+        )
+
+    # Phase 3: lint
+    lint_issues = lint_rule(rule_path)
 
     controls_res, controls_void = check_controls(
         manifest, manifest_path, format_tag, extra_flags)
 
     bad_res, bad_void = check_bad_pool(
-        args.rule, manifest, manifest_path, techniques,
+        rule_path, manifest, manifest_path, techniques,
         format_tag, extra_flags, warnings)
 
     good_res, good_void = check_good_pool(
-        args.rule, manifest, manifest_path, format_tag, extra_flags, warnings)
+        rule_path, manifest, manifest_path, format_tag, extra_flags, warnings)
 
     # VOID > FAIL > PASS
     if controls_void or bad_void or good_void:
@@ -379,27 +468,47 @@ def main():
     elif good_res["result"] == "FAIL":
         verdict = "FAIL"
         offenders = [o["file"] for o in good_res.get("offenders", [])]
-        reason  = f"Rule fired on benign good-pool data: {offenders}"
+        reason    = f"Rule fired on benign good-pool data: {offenders}"
     else:
         verdict = "PASS"
         reason  = None
 
-    output = {
-        "rule_id":         rule["id"],
-        "rule_title":      rule["title"],
-        "rule_file":       args.rule,
-        "corpus_version":  args.corpus_version,
-        "verdict":         verdict,
-        "reason":          reason,
-        "bad_pool":        bad_res,
-        "good_pool":       good_res,
+    return {
+        "rule_id":           rule["id"],
+        "rule_title":        rule["title"],
+        "rule_file":         rule_path,
+        "corpus_version":    corpus_version,
+        "verdict":           verdict,
+        "reason":            reason,
+        "lint":              lint_issues,
+        "bad_pool":          bad_res,
+        "good_pool":         good_res,
         "positive_controls": controls_res,
-        "warnings":        warnings,
-        "timestamp":       datetime.now(timezone.utc).isoformat(),
+        "warnings":          warnings,
+        "timestamp":         datetime.now(timezone.utc).isoformat(),
     }
 
-    print(json.dumps(output, indent=2))
-    return {"PASS": EXIT_PASS, "FAIL": EXIT_FAIL, "VOID": EXIT_VOID}.get(verdict, EXIT_ERROR)
+
+# ── CLI ────────────────────────────────────────────────────────────────────────
+def main():
+    parser = argparse.ArgumentParser(description="SVP SIGMA rule validator")
+    parser.add_argument("rule", help="Path to a SIGMA rule YAML file")
+    parser.add_argument("--corpus-version", default="v2026.06.1")
+    parser.add_argument("--lint-only", action="store_true",
+                        help="Only run lint checks, skip validation")
+    args = parser.parse_args()
+
+    if args.lint_only:
+        issues = lint_rule(args.rule)
+        print(json.dumps(issues, indent=2))
+        errors = [i for i in issues if i["severity"] == "error"]
+        return EXIT_ERROR if errors else EXIT_PASS
+
+    result = validate(args.rule, args.corpus_version)
+    print(json.dumps(result, indent=2))
+    return {"PASS": EXIT_PASS, "FAIL": EXIT_FAIL, "VOID": EXIT_VOID}.get(
+        result.get("verdict", "VOID"), EXIT_ERROR
+    )
 
 
 if __name__ == "__main__":

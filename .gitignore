@@ -6,3 +6,6 @@ __pycache__/
 reports/*.json
 reports/*.csv
 reports/*.html
+web/node_modules/
+web/dist/
+*.log
