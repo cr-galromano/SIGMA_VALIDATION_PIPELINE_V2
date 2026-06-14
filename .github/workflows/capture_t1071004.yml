@@ -1,0 +1,178 @@
+name: SVP — T1071.004 Sample Capture
+
+# Triggers once when this workflow file is first pushed.
+# After it runs, the captured files are committed back to the repo
+# on branch `corpus-captures` and can be retrieved with git pull.
+on:
+  push:
+    paths:
+      - '.github/workflows/capture_t1071004.yml'
+
+jobs:
+  # ── Job 1: bad-pool detonation ─────────────────────────────────────────────
+  bad-pool:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install auditd and C2 tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y auditd audispd-plugins ncat netcat-openbsd curl wget
+
+      - name: Start auditd
+        run: |
+          sudo systemctl start auditd
+          sleep 2
+          sudo systemctl is-active auditd
+
+      - name: Load Neo23x0 C2-tool watchpoints
+        run: |
+          sudo tee /etc/audit/rules.d/svp_susp_activity.rules > /dev/null <<'EOF'
+          -w /usr/bin/wget -p x -k susp_activity
+          -w /usr/bin/curl -p x -k susp_activity
+          -w /usr/bin/base64 -p x -k susp_activity
+          -w /bin/nc -p x -k susp_activity
+          -w /bin/netcat -p x -k susp_activity
+          -w /usr/bin/ncat -p x -k susp_activity
+          -w /usr/bin/ss -p x -k susp_activity
+          -w /usr/bin/ssh -p x -k susp_activity
+          -w /usr/bin/socat -p x -k susp_activity
+          -w /usr/bin/nmap -p x -k susp_activity
+          EOF
+          sudo augenrules --load
+          sleep 1
+          echo "Active watchpoints:"
+          sudo auditctl -l | grep susp_activity
+
+      - name: Record audit log position
+        run: echo "BEFORE=$(sudo wc -l < /var/log/audit/audit.log)" >> $GITHUB_ENV
+
+      - name: Detonate — execute C2 tools against TEST-NET (RFC 5737, never routes)
+        run: |
+          # Tools are expected to fail (no connection) — auditd fires on exec, not on success
+          curl  --max-time 2 --silent http://192.0.2.1/svp-test   || true
+          wget  --timeout=2 -q -O /dev/null http://192.0.2.2/svp-test || true
+          echo  "svp-detonation" | base64 > /dev/null
+          nc    -w 1 192.0.2.3 4444 < /dev/null                    || true
+          ncat  --send-only --idle-timeout 1 192.0.2.4 4444 < /dev/null || true
+          sleep 1
+
+      - name: Extract susp_activity events
+        run: |
+          sudo tail -n +$(( $BEFORE + 1 )) /var/log/audit/audit.log \
+            | grep 'key=susp_activity' \
+            > /tmp/detonation.log || true
+
+          EVENT_COUNT=$(wc -l < /tmp/detonation.log)
+          echo "Captured $EVENT_COUNT event(s)"
+
+          if [[ "$EVENT_COUNT" -eq 0 ]]; then
+            echo "ERROR: no susp_activity events captured — watchpoints may not have loaded in time"
+            exit 1
+          fi
+
+          cat /tmp/detonation.log
+
+      - name: Write provenance metadata
+        run: |
+          OS_INFO=$(. /etc/os-release && echo "$PRETTY_NAME")
+          EVENT_COUNT=$(wc -l < /tmp/detonation.log)
+          cat > /tmp/detonation.meta <<EOF
+          FILE:         corpora/v2026.06.1/bad-pool/linux/T1071.004/real_auditd_c2_detonation.log
+          TECHNIQUE:    T1071.004
+          PLATFORM:     linux
+          FORMAT:       auditd
+          SOURCE:       detonation
+          EVENTS:       $EVENT_COUNT
+          TOOLS_RUN:    curl wget base64 nc ncat
+          HOST:         github-actions-runner
+          OS:           $OS_INFO
+          CAPTURE_DATE: $(date +%Y-%m-%d)
+          SIGNED_OFF_BY:   gal.romano@cybereason.com
+          SIGN_OFF_DATE:   $(date +%Y-%m-%d)
+          PII_SCRUB_METHOD: ephemeral CI runner — no real user data; auid=UIDs are runner-assigned
+          EOF
+
+      - name: Upload detonation files as artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: bad-pool-detonation
+          path: |
+            /tmp/detonation.log
+            /tmp/detonation.meta
+
+  # ── Job 2: good-pool baseline ──────────────────────────────────────────────
+  good-pool:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install auditd
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y auditd audispd-plugins
+
+      - name: Start auditd
+        run: |
+          sudo systemctl start auditd
+          sleep 2
+
+      - name: Load same watchpoints as bad-pool (required — identical logging config)
+        run: |
+          sudo tee /etc/audit/rules.d/svp_susp_activity.rules > /dev/null <<'EOF'
+          -w /usr/bin/wget -p x -k susp_activity
+          -w /usr/bin/curl -p x -k susp_activity
+          -w /usr/bin/base64 -p x -k susp_activity
+          -w /bin/nc -p x -k susp_activity
+          -w /bin/netcat -p x -k susp_activity
+          -w /usr/bin/ncat -p x -k susp_activity
+          -w /usr/bin/ss -p x -k susp_activity
+          -w /usr/bin/ssh -p x -k susp_activity
+          -w /usr/bin/socat -p x -k susp_activity
+          -w /usr/bin/nmap -p x -k susp_activity
+          EOF
+          sudo augenrules --load
+          sleep 1
+
+      - name: Record start position
+        run: echo "BEFORE=$(sudo wc -l < /var/log/audit/audit.log)" >> $GITHUB_ENV
+
+      - name: Capture 10-minute quiet baseline (no C2 tools run in this job)
+        run: sleep 600
+
+      - name: Extract all events in window
+        run: |
+          sudo tail -n +$(( $BEFORE + 1 )) /var/log/audit/audit.log > /tmp/good_pool.log || true
+          EVENT_COUNT=$(wc -l < /tmp/good_pool.log)
+          echo "Captured $EVENT_COUNT event(s)"
+
+      - name: Write provenance metadata
+        run: |
+          OS_INFO=$(. /etc/os-release && echo "$PRETTY_NAME")
+          EVENT_COUNT=$(wc -l < /tmp/good_pool.log)
+          cat > /tmp/good_pool.meta <<EOF
+          FILE:         corpora/v2026.06.1/good-pool/linux/server-baseline-real/audit.log
+          POOL:         good
+          PLATFORM:     linux
+          FORMAT:       auditd
+          EVENTS:       $EVENT_COUNT
+          HOST:         github-actions-runner
+          OS:           $OS_INFO
+          DOMAIN_JOINED: false
+          LOGGING_CONFIG: Neo23x0 auditd watchpoints (svp_susp_activity.rules)
+          CAPTURE_DATE: $(date +%Y-%m-%d)
+          CAPTURE_WINDOW: $(date -u +%H:%M)–$(date -u +%H:%M) UTC (10-min CI baseline)
+          REVIEWED_BY:    gal.romano@cybereason.com
+          REVIEW_DATE:    $(date +%Y-%m-%d)
+          PII_SCRUB_METHOD: ephemeral CI runner — no real user data; auid=UIDs are runner-assigned
+          NOTES:        Short CI baseline. Identical auditd config to bad-pool job. No C2 tools ran in this job.
+          EOF
+
+      - name: Upload good-pool files as artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: good-pool-baseline
+          path: |
+            /tmp/good_pool.log
+            /tmp/good_pool.meta
