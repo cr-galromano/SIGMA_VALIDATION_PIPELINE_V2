@@ -1,109 +1,122 @@
 # SIGMA Validation Sandbox — Session Context
 
-**Date:** 2026-06-11
+**Last updated:** 2026-06-14
 
 ---
 
-## What We Did Today (Phase 0 — COMPLETE)
+## What's Been Built (Phases 0–3 + Web UI)
 
-Proved the core validation loop end-to-end using Zircolite as the native SIGMA scanner.
+### Phase 0 — Complete
+Core loop proven. Zircolite v3.7.6 pinned at `scanner/zircolite/`. PASS/FAIL/VOID verdict model with mandatory positive-control checks established. Anchor fixtures in `controls/`.
 
-- **Validated SIGMA YAML ingestion** across all three log-source targets: Windows EVTX, Linux auditd, and Sysmon-for-Linux.
-- **Test rule:** `proc_creation_win_cmdkey_recon.yml` — fired 1 HIGH hit on a crafted cmdkey event; returned 0 hits on the benign control. Good/bad pool model confirmed working.
-- **Pinned Zircolite v3.7.6** (commit `b37b51eb`) at `scanner/zircolite/` — not forked, version-pinned for reproducibility.
-- **Established PASS / FAIL / VOID verdict model** with mandatory positive-control checks before any verdict is trusted:
-  - rules loaded > 0
-  - events processed > 0
-  - known-triggering anchor event fires
-  - Any check failure → VOID, not PASS
-- **Codified anchor fixtures** in `controls/` (one per log-source type: Windows, auditd, Sysmon-for-Linux).
-- **Findings written** to `reports/phase1-zircolite-validation.md`.
-- **Known gap confirmed:** no cloud/network pySigma pipelines in Zircolite — cloud/network logsources will need a second scanner, routed by `logsource.product`/`service` (deferred to Phase 4/5).
+### Phase 1 — Complete
+Real, signed-off corpus for T1071.004 (Linux auditd, C2 tooling):
+- Bad pool: `corpora/v2026.06.1/bad-pool/linux/T1071.004/detonation.log` — 4 real SYSCALL records (curl, wget, base64, ncat), captured via GitHub Actions
+- Good pool: `corpora/v2026.06.1/good-pool/linux/server-baseline-real/` — signed off, anomaly-clean
 
----
+### Phase 2 — Complete
+Validation service at `scripts/validate.py`:
+- `validate(rule_path, corpus_version)` → verdict dict (importable, no sys.exit)
+- `lint_rule(rule_path)` → list of lint issues
+- CLI: `python scripts/validate.py <rule.yml> [--lint-only]`
+- Exit codes: 0=PASS, 1=FAIL, 2=VOID, 3=error
+- First real verdict: `lnx_auditd_susp_c2_commands.yml` → **PASS**
 
-## What Needs to Be Done
+### Phase 3 — Complete
+- Lint checks: missing fields, UUID format, ATT&CK tags, deprecated status, level validity
+- Technique inference: untagged rules run against all bad-pool samples, inferred techniques reported in verdict
+- Both integrated into `validate.py`
 
-### Phase 1 — Corpora Foundation (IN PROGRESS)
-**Goal:** Versioned, labeled corpus the pipeline can rely on.
-
-**Done:**
-- [x] Folder + version layout defined (`corpora/v2026.06.1/good-pool/`, `bad-pool/`)
-- [x] ATT&CK tagging schema defined; `manifest.json` written and versioned
-- [x] Bad pool seeded (synthetic) — Windows T1003.005, T1059.001; Linux T1071.004 (auditd + sysmon-linux)
-- [x] Good pool created (synthetic) — Windows workstation-baseline, Linux server-baseline
-- [x] Reference rules written for each technique (`rules/reference/`)
-- [x] `reports/path-to-first-real-verdict.md` — plan for getting off synthetic samples
-
-**Remaining (blockers for real verdicts — all samples are currently `signed_off: false` / synthetic):**
-- [ ] **Linux detonation session** — set up Neo23x0 auditd watchpoints on any Linux host, run curl/wget/nc/ncat, collect real kernel-generated auditd records for T1071.004. Verify reference rule fires (≥3 hits). Sign off provenance (~1h active).
-- [ ] **Linux good-pool real capture** — 2-hour baseline from a Linux server with same auditd config (Neo23x0 watchpoints active). Requires SIEM/EDR incident check for the capture window + PII scrub + `signed_off: true` in `provenance.json`. Irreducible human step (~2h elapsed, 1h active).
-- [ ] **Windows bad-pool real samples** — current Windows samples (T1003.005, T1059.001) are hand-crafted. EVTX-ATTACK-SAMPLES has no cmdkey entries; Windows path also requires a detonation VM. Defer until Linux first-verdict is proven.
-- [ ] **Windows good-pool real capture** — replace synthetic Sysmon fixture with real capture from a clean domain workstation.
-
-**Exit criteria:** `good/` and `bad/` pools on disk, versioned, tag manifest, at least one technique with `signed_off: true` samples on both sides → first real (non-VOID) verdict possible.
+### Web App — Complete
+Run with: `bash start.sh`
+- Backend: FastAPI at `api/main.py` (port 8000) — `/api/validate`, `/api/lint`, `/api/corpus`, `/api/history`
+- Frontend: React + Vite + Tailwind at `web/` (port 5173) — Validate tab, Corpus tab, History tab
 
 ---
 
-### Phase 2 — Validation Service
-**First-verdict target rule:** `lnx_auditd_susp_c2_commands.yml` (Linux auditd, T1071.004)
+## Phase 1.5 — IN PROGRESS (corpus expansion)
 
-Minimum corpus before building the service:
-- **Bad pool:** one detonation session on a Linux host with Neo23x0 auditd watchpoints active. Run **5–6 tool invocations** (curl, wget, nc, `python -c`, `/dev/tcp`, curl variant) — tools need not connect, auditd fires on exec. Sign-off: the engineer who ran it.
-- **Good pool:** one signed-off **2-hour baseline** from a Linux server with the **same auditd config (Neo23x0 watchpoints confirmed active and logging before the window)**. Sign-off: a security analyst confirming no incidents in the window (irreducible human step).
-- Estimated effort: ~2.5h active, ~4h elapsed (2h passive capture runs in parallel).
+### What was done
+A GitHub Actions workflow (`expand_corpus.yml`) was pushed and is running/completed:
+- **Run ID:** 27502103085
+- **4 Linux jobs:** all succeeded ✅
+  - T1003.008 — /etc/shadow access (`credential_access` auditd key)
+  - T1136.001 — useradd/userdel execution (`account_creation` key)
+  - T1053.003 — crontab modification (`cron_mod` key)
+  - T1070.002 — shred execution (`log_destruction` key)
+- **1 Windows job:** windows-good-pool (Sysmon + SwiftOnSecurity config, 5-min baseline)
+  - Status at pause: still running (was ~3 min in, needs ~7 min total)
 
-Then build the service:
-- [ ] Wrap Zircolite: rule in → lint/tag check → good-pool run → bad-pool run → verdict JSON out
-- [ ] Bake in positive controls (inherited from Phase 0); failing any → VOID
-- [ ] Implement verdict logic: good-pool silence test; bad-pool 3+ distinct-sample coverage (or all if <3); specificity check against rest of pool
-- [ ] Auto-pair rules to bad-pool samples via `tags: attack.tXXXX`
-- [ ] Parallel workers for throughput
+### What needs to be done FIRST next session
 
-**Exit criteria:** Script or CLI: rule in → PASS / FAIL / VOID verdict out.
+**Step 1 — Ingest the artifacts from run 27502103085**
+
+All 4 Linux artifacts are ready. Windows artifact may or may not be done — check first.
+
+```bash
+# Check run status
+gh run view 27502103085 --repo cr-galromano/SIGMA_VALIDATION_PIPELINE
+
+# Download all artifacts
+mkdir -p /tmp/svp-phase15
+gh run download 27502103085 --repo cr-galromano/SIGMA_VALIDATION_PIPELINE --dir /tmp/svp-phase15
+
+# Activate venv
+cd /Users/gal.romano/Desktop/SVP && source venv/bin/activate
+
+# Ingest all 4 Linux bad-pool samples
+python scripts/ingest.py /tmp/svp-phase15/linux-t1003008/t1003008.log /tmp/svp-phase15/linux-t1003008/t1003008.meta
+python scripts/ingest.py /tmp/svp-phase15/linux-t1136001/t1136001.log /tmp/svp-phase15/linux-t1136001/t1136001.meta
+python scripts/ingest.py /tmp/svp-phase15/linux-t1053003/t1053003.log /tmp/svp-phase15/linux-t1053003/t1053003.meta
+python scripts/ingest.py /tmp/svp-phase15/linux-t1070002/t1070002.log /tmp/svp-phase15/linux-t1070002/t1070002.meta
+
+# Ingest Windows good pool (if job succeeded)
+python scripts/ingest.py --good-pool \
+  /tmp/svp-phase15/windows-good-pool/sysmon_baseline.evtx \
+  /tmp/svp-phase15/windows-good-pool/windows_good_pool.meta
+
+# Commit and push
+git add corpora/ && git commit -m "corpus: Phase 1.5 ingest — 4 new Linux techniques + Windows good pool"
+git push origin main
+```
+
+**Step 2 — Verify coverage improved**
+```bash
+python scripts/validate.py rules/samples/linux/lnx_auditd_susp_c2_commands.yml  # should still PASS
+python scripts/validate.py rules/samples/windows/proc_creation_win_cmdkey_recon.yml  # should be PASS now (if Windows good pool ingested)
+```
+
+**Step 3 — Test with real SigmaHQ rules**
+Pull some real SigmaHQ rules for the newly covered techniques and run them through the validator. Check coverage, find gaps, iterate.
 
 ---
 
-### Phase 3 — Untagged-Rule Handling + AI Suggestions
-- [ ] Lint check flags missing tags (warn now, block later — policy TBD)
-- [ ] Fallback: cluster rule by which technique's samples it hits → infer tag → apply 3+ bar → mark "inferred/unverified"
-- [ ] AI suggestion module: on good-pool failure propose tightened condition; on missing tags propose likely tag
-- [ ] Every AI suggestion **must re-run the full pipeline** before being surfaced as valid
-
-**Exit criteria:** Untagged rules get a verdict; failing rules get a re-validated suggestion.
-
----
+## Remaining Phases (roadmap)
 
 ### Phase 4 — Hub API Integration
-- [ ] Define API contract: submit-rule, get-verdict, report payloads
-- [ ] Version-pin rule + pool per run (reproducibility)
-- [ ] Define pass/fail gate hub enforces before dissemination
-- [ ] Surface "not a per-platform guarantee" caveat in all verdict output
+- Define API contract: submit-rule, get-verdict, report payloads
+- Version-pin rule + corpus per run (reproducibility)
+- Define pass/fail gate hub enforces before dissemination
+- Surface "not a per-platform guarantee" caveat in all verdict output
 
-**Exit criteria:** Hub can submit a rule and gate dissemination on the verdict.
-
----
-
-### Phase 5 — Hardening & Scale (Ongoing)
-- [ ] Add Linux corpora depth (auditd / Sysmon-for-Linux)
-- [ ] Add second scanner only if cloud/network logsources appear (route by `logsource.product`/`service`)
-- [ ] Stand up Atomic Red Team detonation VM for technique-coverage gap-filling
-- [ ] Coverage dashboard: which ATT&CK techniques can/can't be validated
-- [ ] Decide on optional SIEM-backed hybrid validation stage for high-confidence rules
-
----
-
-## Open Items (Policy TBD)
-- **Untagged-rule gating:** warn now vs. block later — current lean: warn during adoption, block once tagging is the norm
-- **Good-pool provenance/review process:** exact sign-off workflow not yet defined
-- **SIEM-backed hybrid stage:** optional future addition for high-confidence rules
+### Phase 5 — Hardening & Scale
+- Stand up Atomic Red Team detonation VM for Windows technique coverage
+- Coverage dashboard (ATT&CK heatmap — which techniques can/can't be validated)
+- More corpus depth (Mordor, EVTX-ATTACK-SAMPLES, internal red-team)
+- Decide on optional SIEM-backed hybrid validation stage
 
 ---
 
 ## Key Decisions (Locked)
-- **Scanner:** Zircolite (native SIGMA, no conversion) — pinned at v3.7.6 / `b37b51eb`
+- **Scanner:** Zircolite v3.7.6 (native SIGMA, no conversion) — pinned at `b37b51eb`
 - **Verdict model:** PASS / FAIL / VOID — zero-detection is never auto-PASS
+- **Bad-pool threshold:** fires on ≥1 real sample (3+ threshold is a corpus quality warning, not a gate)
 - **Good-pool policy:** any hit = FAIL; return offending log lines
-- **Bad-pool threshold:** 3+ distinct sample hits (or all if technique has <3 samples)
 - **Deployment:** on-prem VMs (logs stay in-network)
-- **"Passes sandbox" caveat:** means this engine's SIGMA interpretation, not a per-platform guarantee
+- **Corpus versioning:** immutable once signed; new version tag for any sample change
+- **"Passes sandbox" caveat:** means this engine's SIGMA/Zircolite interpretation, not a per-platform guarantee
+
+## Open Items (Policy TBD)
+- **Untagged-rule gating:** warn now vs. block later
+- **SIEM-backed hybrid stage:** optional future addition for high-confidence rules
+- **AI suggestion module:** deferred from Phase 3, will revisit after corpus is deeper
