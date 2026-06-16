@@ -318,6 +318,7 @@ def _pipeline(platform: str, fmt: str) -> list:
 
 
 def main():
+    global CORPUS_VERSION
     parser = argparse.ArgumentParser(description="SVP corpus ingest")
     parser.add_argument("sample", help="Path to the captured log/evtx file")
     parser.add_argument("meta",   help="Path to the .meta provenance file")
@@ -325,7 +326,6 @@ def main():
     parser.add_argument("--corpus-version", default=CORPUS_VERSION)
     args = parser.parse_args()
 
-    global CORPUS_VERSION
     CORPUS_VERSION = args.corpus_version
 
     if not Path(args.sample).exists():

@@ -98,6 +98,102 @@
             "sha256": "e8c8aa2535cbad476bb1e86a60872bc8f164478f807748730744687fee43498d"
           }
         ]
+      },
+      "T1003.008": {
+        "tactic": "credential-access",
+        "technique_name": "OS Credential Dumping: /etc/passwd",
+        "format": "auditd",
+        "logsource": {
+          "product": "linux",
+          "service": "auditd"
+        },
+        "pipeline": [],
+        "reference_rule": "rules/reference/linux/T1003.008/ref_shadow_file_access.yml",
+        "reference_rule_status": "verified",
+        "sample_count": 1,
+        "samples": [
+          {
+            "file": "bad-pool/linux/T1003.008/t1003008.log",
+            "source": "detonation",
+            "events": 51,
+            "description": "Real detonation capture: cat grep",
+            "capture_date": "2026-06-14",
+            "reference_rule_verified": true,
+            "sha256": "de0c39d07213910e8bd2e2b230ab608dd031ad4c40db3923f80de8b8220b7225"
+          }
+        ]
+      },
+      "T1136.001": {
+        "tactic": "persistence",
+        "technique_name": "Create Account: Local Account",
+        "format": "auditd",
+        "logsource": {
+          "product": "linux",
+          "service": "auditd"
+        },
+        "pipeline": [],
+        "reference_rule": "rules/reference/linux/T1136.001/ref_account_creation.yml",
+        "reference_rule_status": "verified",
+        "sample_count": 1,
+        "samples": [
+          {
+            "file": "bad-pool/linux/T1136.001/t1136001.log",
+            "source": "detonation",
+            "events": 2,
+            "description": "Real detonation capture: useradd userdel",
+            "capture_date": "2026-06-14",
+            "reference_rule_verified": true,
+            "sha256": "bb9036f675365081fcc90f399431e40ccb4ddcc2c3a5e0380d4111f9de7fb1b6"
+          }
+        ]
+      },
+      "T1053.003": {
+        "tactic": "persistence",
+        "technique_name": "Scheduled Task/Job: Cron",
+        "format": "auditd",
+        "logsource": {
+          "product": "linux",
+          "service": "auditd"
+        },
+        "pipeline": [],
+        "reference_rule": "rules/reference/linux/T1053.003/ref_cron_modification.yml",
+        "reference_rule_status": "verified",
+        "sample_count": 1,
+        "samples": [
+          {
+            "file": "bad-pool/linux/T1053.003/t1053003.log",
+            "source": "detonation",
+            "events": 5,
+            "description": "Real detonation capture: crontab",
+            "capture_date": "2026-06-14",
+            "reference_rule_verified": true,
+            "sha256": "4291ca3716fbbcb3992b3b25f247f724266d2e0a9454afe219ed7d25bad4168b"
+          }
+        ]
+      },
+      "T1070.002": {
+        "tactic": "defense-evasion",
+        "technique_name": "Indicator Removal: Clear Linux or Mac System Logs",
+        "format": "auditd",
+        "logsource": {
+          "product": "linux",
+          "service": "auditd"
+        },
+        "pipeline": [],
+        "reference_rule": "rules/reference/linux/T1070.002/ref_log_destruction.yml",
+        "reference_rule_status": "verified",
+        "sample_count": 1,
+        "samples": [
+          {
+            "file": "bad-pool/linux/T1070.002/t1070002.log",
+            "source": "detonation",
+            "events": 2,
+            "description": "Real detonation capture: shred",
+            "capture_date": "2026-06-14",
+            "reference_rule_verified": true,
+            "sha256": "73e432a8846ccdcb14764e0127947a7a0099925e4068769096265ff584db2194"
+          }
+        ]
       }
     }
   },

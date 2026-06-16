@@ -14,8 +14,9 @@ on:
 
 jobs:
 
-  # ── T1003.008: /etc/shadow access ─────────────────────────────────────────
+  # ── T1003.008: /etc/shadow access (already ingested — disabled) ───────────
   linux-t1003008:
+    if: false
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
@@ -78,8 +79,9 @@ jobs:
           name: linux-t1003008
           path: /tmp/t1003008.*
 
-  # ── T1136.001: Local account creation ────────────────────────────────────
+  # ── T1136.001: Local account creation (already ingested — disabled) ─────
   linux-t1136001:
+    if: false
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
@@ -141,8 +143,9 @@ jobs:
           name: linux-t1136001
           path: /tmp/t1136001.*
 
-  # ── T1053.003: Cron job modification ─────────────────────────────────────
+  # ── T1053.003: Cron job modification (already ingested — disabled) ───────
   linux-t1053003:
+    if: false
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
@@ -206,8 +209,9 @@ jobs:
           name: linux-t1053003
           path: /tmp/t1053003.*
 
-  # ── T1070.002: Log destruction via shred ──────────────────────────────────
+  # ── T1070.002: Log destruction via shred (already ingested — disabled) ───
   linux-t1070002:
+    if: false
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
@@ -325,12 +329,14 @@ jobs:
           REVIEW_DATE: $(Get-Date -Format 'yyyy-MM-dd')
           PII_SCRUB_METHOD: ephemeral CI runner — no real user data; hostname is runner-assigned
           NOTES: 5-minute GitHub Actions Windows Server 2022 baseline with Sysmon SwiftOnSecurity config.
-          "@ | Out-File -FilePath "$env:TEMP\windows_good_pool.meta" -Encoding utf8
+          "@ | Out-File -FilePath "windows_good_pool.meta" -Encoding utf8
+          # Copy evtx to workspace so upload-artifact can find it
+          Copy-Item "$env:TEMP\sysmon_baseline.evtx" "sysmon_baseline.evtx"
           Write-Host "Events captured: $count"
 
       - uses: actions/upload-artifact@v4
         with:
           name: windows-good-pool
           path: |
-            ${{ env.TEMP }}\sysmon_baseline.evtx
-            ${{ env.TEMP }}\windows_good_pool.meta
+            sysmon_baseline.evtx
+            windows_good_pool.meta
