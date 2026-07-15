@@ -252,6 +252,9 @@ def ingest_good_pool(sample_file: str, meta: dict):
     if platform == "linux":
         source_dir_name = "server-baseline-real"
         log_filename    = "audit.log"
+    elif platform == "macos":
+        source_dir_name = "github-actions-baseline"
+        log_filename    = "mac_baseline.jsonl"
     else:
         source_dir_name = "github-actions-baseline"
         log_filename    = "sysmon_baseline" + Path(sample_file).suffix
@@ -264,8 +267,10 @@ def ingest_good_pool(sample_file: str, meta: dict):
     print(f"  Copied to {dest_file}")
 
     # Write provenance.json
+    system_type = {"linux": "linux-server", "windows": "windows-server",
+                   "macos": "macos-workstation"}.get(platform, platform)
     prov = {
-        "system_type": "linux-server" if platform == "linux" else "windows-server",
+        "system_type": system_type,
         "os": os_info,
         "domain_joined": domain_joined == "true",
         "logging_config": logging_cfg,
@@ -309,6 +314,8 @@ def _logsource(platform: str, fmt: str) -> dict:
         return {"product": "linux", "service": "auditd"}
     if platform == "linux":
         return {"product": "linux", "service": "sysmon"}
+    if platform == "macos":
+        return {"category": "process_creation", "product": "macos"}
     return {"category": "process_creation", "product": "windows"}
 
 def _pipeline(platform: str, fmt: str) -> list:

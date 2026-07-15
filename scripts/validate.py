@@ -41,14 +41,19 @@ LOGSOURCE_MAP = {
                                               "--pipeline", "windows-logsources"]),
     ("windows", None):     ("windows",      ["--pipeline", "sysmon",
                                               "--pipeline", "windows-logsources"]),
+    # macOS: events pre-converted to SIGMA JSONL via scripts/mac_bsm_to_sigma.py
+    ("macos",   "process_creation"): ("macos", ["--json-input"]),
+    ("macos",   None):               ("macos", ["--json-input"]),
 }
-FORMAT_PLATFORM      = {"auditd": "linux", "sysmon4linux": "linux", "windows": "windows"}
+FORMAT_PLATFORM      = {"auditd": "linux", "sysmon4linux": "linux",
+                        "windows": "windows", "macos": "macos"}
 FORMAT_CORPUS_FORMAT = {"auditd": "auditd", "sysmon4linux": "sysmon-linux",
-                        "windows": "sysmon-json"}
+                        "windows": "sysmon-json", "macos": "bsm-jsonl"}
 FORMAT_ANCHOR_KEY    = {"auditd": "auditd", "sysmon4linux": "sysmon-linux",
-                        "windows": "windows-sysmon"}
+                        "windows": "windows-sysmon", "macos": "macos"}
 FORMAT_LOG_GLOBS     = {"auditd": ["*.log"], "sysmon4linux": ["*.log"],
-                        "windows": ["*.json", "*.evtx"]}
+                        "windows": ["*.json", "*.evtx"],
+                        "macos":   ["*.jsonl"]}
 
 
 def resolve_logsource(logsource: dict):

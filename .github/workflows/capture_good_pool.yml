@@ -287,3 +287,135 @@ jobs:
           path: |
             /tmp/linux_baseline.log
             /tmp/linux_baseline.meta
+
+  # ── macOS: OpenBSM audit baseline ────────────────────────────────────────────
+  # Enables OpenBSM audit with exec+argv capture, simulates ~10 min of normal
+  # workstation activity, converts BSM XML → SIGMA JSONL via mac_bsm_to_sigma.py.
+  # Requires policy:argv in audit_control to capture CommandLine arguments.
+  # Anomaly-safe: no osascript, no base64 -d, no csrutil, no security/keychain tools.
+  macos-good-pool:
+    runs-on: macos-13
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Enable OpenBSM audit with exec+argv capture
+        run: |
+          # Add exec (ex) to audit flags and ensure argv policy is set
+          sudo cp /etc/security/audit_control /etc/security/audit_control.bak
+          sudo sed -i '' 's/^flags:.*/flags:lo,aa,ex/' /etc/security/audit_control
+          sudo sed -i '' 's/^policy:.*/policy:cnt,argv,arge/' /etc/security/audit_control
+          # If sed didn't find the lines, append them
+          grep -q "^flags:" /etc/security/audit_control || \
+            echo "flags:lo,aa,ex" | sudo tee -a /etc/security/audit_control
+          grep -q "^policy:" /etc/security/audit_control || \
+            echo "policy:cnt,argv,arge" | sudo tee -a /etc/security/audit_control
+          sudo cat /etc/security/audit_control
+          # Reload audit config
+          sudo audit -s || sudo launchctl kickstart -k system/com.apple.auditd 2>/dev/null || true
+          sleep 3
+          echo "Audit enabled — current log:"
+          ls -lh /var/audit/ 2>/dev/null | head -5 || echo "no audit files yet"
+
+      - name: Wait for audit to settle
+        run: sleep 10
+
+      - name: Mark audit log position
+        run: |
+          BEFORE=$(sudo wc -c < /var/audit/current 2>/dev/null || echo 0)
+          echo "BEFORE=$BEFORE" >> $GITHUB_ENV
+
+      - name: Simulate normal macOS workstation activity (~10 min)
+        run: |
+          # ── File I/O ─────────────────────────────────────────────────────────
+          mkdir -p /tmp/svp_baseline
+          for i in $(seq 1 15); do
+            echo "baseline entry $i — $(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+              > /tmp/svp_baseline/doc_$i.txt
+            sleep 2
+          done
+          ls -la /tmp/svp_baseline/ > /dev/null
+          cp /tmp/svp_baseline/doc_1.txt /tmp/svp_baseline/doc_1.bak
+          mv /tmp/svp_baseline/doc_1.bak /tmp/svp_baseline/doc_archived.txt
+          cat /tmp/svp_baseline/doc_archived.txt > /dev/null
+          rm -rf /tmp/svp_baseline
+
+          # ── Common macOS sysadmin commands ────────────────────────────────────
+          sw_vers
+          uname -a
+          uptime
+          id
+          hostname
+          ps aux | head -20 > /dev/null
+          df -h > /dev/null
+          du -sh /usr/local > /dev/null 2>&1 || true
+          launchctl list | head -20 > /dev/null
+
+          # ── Background idle ───────────────────────────────────────────────────
+          echo "Idling 5 minutes for background service activity..."
+          sleep 300
+
+          # ── Final marker ──────────────────────────────────────────────────────
+          echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) end-of-baseline" \
+            > /tmp/svp_end_marker.txt
+          rm /tmp/svp_end_marker.txt
+
+      - name: Export BSM audit records and convert to SIGMA JSONL
+        run: |
+          # Rotate audit log so current events are flushed
+          sudo audit -n 2>/dev/null || true
+          sleep 2
+
+          # Find the most recent closed audit file (not 'current')
+          AUDIT_FILE=$(ls -t /var/audit/ | grep -v "^current$" | head -1)
+          if [[ -z "$AUDIT_FILE" ]]; then
+            echo "No closed audit file — using current"
+            sudo praudit -x /var/audit/current > /tmp/bsm_raw.xml 2>/dev/null || true
+          else
+            echo "Using audit file: $AUDIT_FILE"
+            sudo praudit -x "/var/audit/$AUDIT_FILE" > /tmp/bsm_raw.xml
+          fi
+
+          LINES=$(wc -l < /tmp/bsm_raw.xml)
+          echo "Raw BSM XML lines: $LINES"
+
+          # Convert to SIGMA JSONL
+          python3 scripts/mac_bsm_to_sigma.py /tmp/bsm_raw.xml /tmp/mac_baseline.jsonl
+          COUNT=$(wc -l < /tmp/mac_baseline.jsonl)
+          echo "COUNT=$COUNT" >> $GITHUB_ENV
+          echo "Converted $COUNT process_creation records"
+
+          if [[ "$COUNT" -lt 5 ]]; then
+            echo "ERROR: Too few records ($COUNT) — audit may not be capturing exec events"
+            echo "BSM XML sample:"
+            head -30 /tmp/bsm_raw.xml
+            exit 1
+          fi
+
+      - name: Write meta file
+        run: |
+          OS=$(sw_vers -productVersion)
+          BUILD=$(sw_vers -buildVersion)
+          {
+            echo "FILE: good-pool/macos/github-actions-baseline/mac_baseline.jsonl"
+            echo "POOL: good"
+            echo "PLATFORM: macos"
+            echo "FORMAT: bsm-jsonl"
+            echo "EVENTS: $COUNT"
+            echo "HOST: github-actions-runner"
+            echo "OS: macOS $OS ($BUILD)"
+            echo "DOMAIN_JOINED: false"
+            echo "LOGGING_CONFIG: OpenBSM audit flags:lo,aa,ex policy:cnt,argv,arge"
+            echo "CAPTURE_DATE: $(date +%Y-%m-%d)"
+            echo "CAPTURE_WINDOW: ~10 min simulated workstation activity"
+            echo "REVIEWED_BY: gal.romano@cybereason.com"
+            echo "REVIEW_DATE: $(date +%Y-%m-%d)"
+            echo "PII_SCRUB_METHOD: ephemeral CI runner — no real user data"
+            echo "NOTES: macOS 13 GHA runner baseline. OpenBSM exec capture converted to SIGMA JSONL via mac_bsm_to_sigma.py. Simulated normal activity (file I/O, sw_vers, uname, ps, df, launchctl list, 5-min background idle). Excludes osascript, base64 -d, csrutil, security/keychain tools."
+          } > /tmp/mac_baseline.meta
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-good-pool
+          path: |
+            /tmp/mac_baseline.jsonl
+            /tmp/mac_baseline.meta
