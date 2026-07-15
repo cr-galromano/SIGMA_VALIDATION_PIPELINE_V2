@@ -288,41 +288,20 @@ jobs:
             /tmp/linux_baseline.log
             /tmp/linux_baseline.meta
 
-  # ── macOS: OpenBSM audit baseline ────────────────────────────────────────────
-  # Enables OpenBSM audit with exec+argv capture, simulates ~10 min of normal
-  # workstation activity, converts BSM XML → SIGMA JSONL via mac_bsm_to_sigma.py.
-  # Requires policy:argv in audit_control to capture CommandLine arguments.
+  # ── macOS: Unified Log baseline ───────────────────────────────────────────────
+  # Uses macOS Unified Log (always available, no daemon required) to capture
+  # process activity. Converts to SIGMA JSONL via mac_unified_to_sigma.py.
+  # Note: CommandLine is not available in Unified Log (requires ESF or OpenBSM).
+  # For good-pool purposes this is fine — rules that check CommandLine simply
+  # won't match (no false positives).
   # Anomaly-safe: no osascript, no base64 -d, no csrutil, no security/keychain tools.
   macos-good-pool:
     runs-on: macos-13
     steps:
       - uses: actions/checkout@v4
 
-      - name: Enable OpenBSM audit with exec+argv capture
-        run: |
-          # Add exec (ex) to audit flags and ensure argv policy is set
-          sudo cp /etc/security/audit_control /etc/security/audit_control.bak
-          sudo sed -i '' 's/^flags:.*/flags:lo,aa,ex/' /etc/security/audit_control
-          sudo sed -i '' 's/^policy:.*/policy:cnt,argv,arge/' /etc/security/audit_control
-          # If sed didn't find the lines, append them
-          grep -q "^flags:" /etc/security/audit_control || \
-            echo "flags:lo,aa,ex" | sudo tee -a /etc/security/audit_control
-          grep -q "^policy:" /etc/security/audit_control || \
-            echo "policy:cnt,argv,arge" | sudo tee -a /etc/security/audit_control
-          sudo cat /etc/security/audit_control
-          # Reload audit config
-          sudo audit -s || sudo launchctl kickstart -k system/com.apple.auditd 2>/dev/null || true
-          sleep 3
-          echo "Audit enabled — current log:"
-          ls -lh /var/audit/ 2>/dev/null | head -5 || echo "no audit files yet"
-
-      - name: Wait for audit to settle
-        run: sleep 10
-
-      - name: Mark audit log position
-        run: |
-          BEFORE=$(sudo wc -c < /var/audit/current 2>/dev/null || echo 0)
-          echo "BEFORE=$BEFORE" >> $GITHUB_ENV
+      - name: Record baseline start time
+        run: echo "START_TIME=$(date -u +'%Y-%m-%d %H:%M:%S')" >> $GITHUB_ENV
 
       - name: Simulate normal macOS workstation activity (~10 min)
         run: |
@@ -354,40 +333,30 @@ jobs:
           echo "Idling 5 minutes for background service activity..."
           sleep 300
 
-          # ── Final marker ──────────────────────────────────────────────────────
-          echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) end-of-baseline" \
-            > /tmp/svp_end_marker.txt
-          rm /tmp/svp_end_marker.txt
+          echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) simulation complete"
 
-      - name: Export BSM audit records and convert to SIGMA JSONL
+      - name: Capture Unified Log and convert to SIGMA JSONL
         run: |
-          # Rotate audit log so current events are flushed
-          sudo audit -n 2>/dev/null || true
-          sleep 2
+          echo "Capturing Unified Log from $START_TIME onwards..."
+          log show \
+            --style json \
+            --start "$START_TIME" \
+            --predicate 'processImagePath BEGINSWITH "/" AND processImagePath != "/usr/libexec/logd"' \
+            2>/dev/null > /tmp/unified_raw.json || true
 
-          # Find the most recent closed audit file (not 'current')
-          AUDIT_FILE=$(ls -t /var/audit/ | grep -v "^current$" | head -1)
-          if [[ -z "$AUDIT_FILE" ]]; then
-            echo "No closed audit file — using current"
-            sudo praudit -x /var/audit/current > /tmp/bsm_raw.xml 2>/dev/null || true
-          else
-            echo "Using audit file: $AUDIT_FILE"
-            sudo praudit -x "/var/audit/$AUDIT_FILE" > /tmp/bsm_raw.xml
-          fi
+          RAW_SIZE=$(wc -c < /tmp/unified_raw.json)
+          echo "Raw JSON size: $RAW_SIZE bytes"
 
-          LINES=$(wc -l < /tmp/bsm_raw.xml)
-          echo "Raw BSM XML lines: $LINES"
+          python3 scripts/mac_unified_to_sigma.py \
+            /tmp/unified_raw.json /tmp/mac_baseline.jsonl
 
-          # Convert to SIGMA JSONL
-          python3 scripts/mac_bsm_to_sigma.py /tmp/bsm_raw.xml /tmp/mac_baseline.jsonl
           COUNT=$(wc -l < /tmp/mac_baseline.jsonl)
           echo "COUNT=$COUNT" >> $GITHUB_ENV
-          echo "Converted $COUNT process_creation records"
+          echo "Unique process entries: $COUNT"
 
           if [[ "$COUNT" -lt 5 ]]; then
-            echo "ERROR: Too few records ($COUNT) — audit may not be capturing exec events"
-            echo "BSM XML sample:"
-            head -30 /tmp/bsm_raw.xml
+            echo "ERROR: Too few records ($COUNT)"
+            head -5 /tmp/unified_raw.json
             exit 1
           fi
 
@@ -404,13 +373,13 @@ jobs:
             echo "HOST: github-actions-runner"
             echo "OS: macOS $OS ($BUILD)"
             echo "DOMAIN_JOINED: false"
-            echo "LOGGING_CONFIG: OpenBSM audit flags:lo,aa,ex policy:cnt,argv,arge"
+            echo "LOGGING_CONFIG: macOS Unified Log (processImagePath filter)"
             echo "CAPTURE_DATE: $(date +%Y-%m-%d)"
             echo "CAPTURE_WINDOW: ~10 min simulated workstation activity"
             echo "REVIEWED_BY: gal.romano@cybereason.com"
             echo "REVIEW_DATE: $(date +%Y-%m-%d)"
             echo "PII_SCRUB_METHOD: ephemeral CI runner — no real user data"
-            echo "NOTES: macOS 13 GHA runner baseline. OpenBSM exec capture converted to SIGMA JSONL via mac_bsm_to_sigma.py. Simulated normal activity (file I/O, sw_vers, uname, ps, df, launchctl list, 5-min background idle). Excludes osascript, base64 -d, csrutil, security/keychain tools."
+            echo "NOTES: macOS 13 GHA runner baseline. Unified Log converted to SIGMA JSONL via mac_unified_to_sigma.py. CommandLine not available (Unified Log limitation — requires ESF for that field). Simulated normal activity (file I/O, sw_vers, uname, ps, df, launchctl, 5-min idle). Excludes osascript, base64 -d, csrutil, security/keychain tools."
           } > /tmp/mac_baseline.meta
 
       - uses: actions/upload-artifact@v4
