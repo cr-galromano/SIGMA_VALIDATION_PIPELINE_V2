@@ -1,0 +1,29 @@
+title: Shadow File Access via Auditd Watchpoint
+id: c4d5e6f7-a8b9-4c0d-1e2f-3a4b5c6d7e8f
+status: experimental
+description: |
+    Detects access to /etc/shadow or /etc/passwd via auditd SYSCALL records tagged with
+    key=credential_access. This requires an auditd watchpoint on the shadow file
+    (e.g., -w /etc/shadow -p r -k credential_access). Covers T1003.008 shadow file reads.
+    NOTE: SigmaHQ has no direct auditd-based shadow-read rule; closest is T1552.001 grep rules
+    under process_creation — those do not match auditd SYSCALL format.
+references:
+    - https://attack.mitre.org/techniques/T1003/008/
+    - https://github.com/redcanaryco/atomic-red-team/blob/master/atomics/T1003.008/T1003.008.md
+author: svp-sandbox
+date: 2026-07-15
+tags:
+    - attack.t1003.008
+    - attack.credential-access
+logsource:
+    product: linux
+    service: auditd
+detection:
+    selection:
+        type: 'SYSCALL'
+        key: 'credential_access'
+    condition: selection
+falsepositives:
+    - Legitimate privileged access to /etc/shadow (e.g., passwd command, sudo operations)
+    - Security tools performing credential audits
+level: high

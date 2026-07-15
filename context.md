@@ -1,6 +1,6 @@
 # SIGMA Validation Sandbox — Session Context
 
-**Last updated:** 2026-06-14
+**Last updated:** 2026-07-15
 
 ---
 
@@ -34,60 +34,38 @@ Run with: `bash start.sh`
 
 ---
 
-## Phase 1.5 — IN PROGRESS (corpus expansion)
+## Phase 1.5 — COMPLETE (corpus expansion + rule validation)
 
 ### What was done
-A GitHub Actions workflow (`expand_corpus.yml`) was pushed and is running/completed:
-- **Run ID:** 27502103085
-- **4 Linux jobs:** all succeeded ✅
-  - T1003.008 — /etc/shadow access (`credential_access` auditd key)
-  - T1136.001 — useradd/userdel execution (`account_creation` key)
-  - T1053.003 — crontab modification (`cron_mod` key)
-  - T1070.002 — shred execution (`log_destruction` key)
-- **1 Windows job:** windows-good-pool (Sysmon + SwiftOnSecurity config, 5-min baseline)
-  - Status at pause: still running (was ~3 min in, needs ~7 min total)
+- All 4 Linux bad-pool techniques ingested from GHA run 27502103085
+  - T1003.008, T1136.001, T1053.003, T1070.002 — all in `corpora/v2026.06.1/bad-pool/linux/`
+- Windows good-pool ingested as synthetic placeholder (`good-pool/windows/workstation-baseline/`) — **unsigned/not signed off** (synthetic Zircolite fixtures; contains suspicious events like malware.exe that would cause false FAILs — do not sign off without replacing with a real capture)
+- 4 new Linux sample rules added to `rules/samples/linux/` and all verified PASS:
+  - `lnx_auditd_create_account.yml` — real SigmaHQ rule (T1136.001): **PASS** (1 detection)
+  - `lnx_auditd_crontab_execution.yml` — svp-authored (T1053.003): **PASS** (5 detections)
+  - `lnx_auditd_shred_log_destruction.yml` — svp-authored (T1070.002): **PASS** (2 detections)
+  - `lnx_auditd_shadow_file_access.yml` — svp-authored (T1003.008): **PASS** (51 detections)
 
-### What needs to be done FIRST next session
+### SigmaHQ coverage gaps found (2026-07-15)
+SigmaHQ has **no auditd-based rules** for:
+- **T1053.003** (crontab) — only `service: cron` and `category: process_creation` variants exist; neither matches auditd SYSCALL format
+- **T1070.002** (shred) — no shred rule at all; closest is dd/dev/null wipe (T1485)
+- **T1003.008** (shadow access) — no auditd SYSCALL rule; closest is T1552.001 grep-for-password (process_creation format, different logsource)
 
-**Step 1 — Ingest the artifacts from run 27502103085**
+Our corpus proves these techniques are detectable via auditd SYSCALL records. The gap is in public rule libraries.
 
-All 4 Linux artifacts are ready. Windows artifact may or may not be done — check first.
+---
 
-```bash
-# Check run status
-gh run view 27502103085 --repo cr-galromano/SIGMA_VALIDATION_PIPELINE
+## Next Steps
 
-# Download all artifacts
-mkdir -p /tmp/svp-phase15
-gh run download 27502103085 --repo cr-galromano/SIGMA_VALIDATION_PIPELINE --dir /tmp/svp-phase15
+### Immediate — Windows good-pool (blocks Windows PASS verdicts)
+The `good-pool/windows/workstation-baseline/` is synthetic and unsigned. Windows rules return VOID until this is replaced with a real capture and signed off. Options:
+1. **Re-run the GHA job** (`expand_corpus.yml` Windows job) once the pipeline repo is accessible again
+2. **Manual capture**: clean Windows VM, Sysmon v14 + SwiftOnSecurity config, capture ~24h, export, PII review, sign off
+3. **Atomic Red Team**: stand up ART detonation environment (Phase 5 prerequisite anyway)
 
-# Activate venv
-cd /Users/gal.romano/Desktop/SVP && source venv/bin/activate
-
-# Ingest all 4 Linux bad-pool samples
-python scripts/ingest.py /tmp/svp-phase15/linux-t1003008/t1003008.log /tmp/svp-phase15/linux-t1003008/t1003008.meta
-python scripts/ingest.py /tmp/svp-phase15/linux-t1136001/t1136001.log /tmp/svp-phase15/linux-t1136001/t1136001.meta
-python scripts/ingest.py /tmp/svp-phase15/linux-t1053003/t1053003.log /tmp/svp-phase15/linux-t1053003/t1053003.meta
-python scripts/ingest.py /tmp/svp-phase15/linux-t1070002/t1070002.log /tmp/svp-phase15/linux-t1070002/t1070002.meta
-
-# Ingest Windows good pool (if job succeeded)
-python scripts/ingest.py --good-pool \
-  /tmp/svp-phase15/windows-good-pool/sysmon_baseline.evtx \
-  /tmp/svp-phase15/windows-good-pool/windows_good_pool.meta
-
-# Commit and push
-git add corpora/ && git commit -m "corpus: Phase 1.5 ingest — 4 new Linux techniques + Windows good pool"
-git push origin main
-```
-
-**Step 2 — Verify coverage improved**
-```bash
-python scripts/validate.py rules/samples/linux/lnx_auditd_susp_c2_commands.yml  # should still PASS
-python scripts/validate.py rules/samples/windows/proc_creation_win_cmdkey_recon.yml  # should be PASS now (if Windows good pool ingested)
-```
-
-**Step 3 — Test with real SigmaHQ rules**
-Pull some real SigmaHQ rules for the newly covered techniques and run them through the validator. Check coverage, find gaps, iterate.
+### Near-term — Contribute gaps back to SigmaHQ
+We found 3 auditd detection gaps (T1053.003 crontab, T1070.002 shred, T1003.008 shadow access). Our sample rules are proof-of-concept and can be refined for upstream contribution.
 
 ---
 

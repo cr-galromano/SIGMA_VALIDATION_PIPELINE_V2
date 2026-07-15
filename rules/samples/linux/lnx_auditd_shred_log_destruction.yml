@@ -1,0 +1,27 @@
+title: Shred Execution for Log Destruction via Auditd
+id: b3c4d5e6-f7a8-4b9c-0d1e-2f3a4b5c6d7e
+status: experimental
+description: |
+    Detects execution of the shred binary via auditd SYSCALL records. Shred is used to
+    securely overwrite files, commonly used by attackers to destroy logs or evidence
+    (T1070.002). Requires auditd watchpoints capturing shred execution (e.g., key=log_destruction).
+    NOTE: No equivalent SigmaHQ auditd rule exists for shred — corpus gap documented.
+references:
+    - https://attack.mitre.org/techniques/T1070/002/
+    - https://github.com/redcanaryco/atomic-red-team/blob/master/atomics/T1070.002/T1070.002.md
+author: svp-sandbox
+date: 2026-07-15
+tags:
+    - attack.t1070.002
+    - attack.defense-evasion
+logsource:
+    product: linux
+    service: auditd
+detection:
+    selection:
+        type: 'SYSCALL'
+        exe|endswith: '/shred'
+    condition: selection
+falsepositives:
+    - Legitimate secure file deletion by admins
+level: high

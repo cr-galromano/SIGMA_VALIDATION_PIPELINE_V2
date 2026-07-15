@@ -1,0 +1,27 @@
+title: Crontab Execution Detected via Auditd
+id: a2b3c4d5-e6f7-4a8b-9c0d-1e2f3a4b5c6d
+status: experimental
+description: |
+    Detects execution of crontab binary via auditd SYSCALL records. Crontab modifications are a
+    common persistence mechanism (T1053.003). Requires auditd watchpoints configured to capture
+    crontab execution (e.g., key=cron_mod).
+    NOTE: No equivalent SigmaHQ auditd rule exists for this technique — corpus gap documented.
+references:
+    - https://attack.mitre.org/techniques/T1053/003/
+    - https://github.com/redcanaryco/atomic-red-team/blob/master/atomics/T1053.003/T1053.003.md
+author: svp-sandbox
+date: 2026-07-15
+tags:
+    - attack.t1053.003
+    - attack.persistence
+logsource:
+    product: linux
+    service: auditd
+detection:
+    selection:
+        type: 'SYSCALL'
+        exe|endswith: '/crontab'
+    condition: selection
+falsepositives:
+    - Legitimate scheduled task administration
+level: medium
