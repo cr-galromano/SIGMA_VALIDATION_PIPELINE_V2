@@ -133,23 +133,25 @@ jobs:
         run: |
           $os = (Get-CimInstance Win32_OperatingSystem).Caption
           $endLabel = (Get-Date).ToUniversalTime().ToString('HH:mm UTC')
-          @"
-FILE: good-pool/windows/github-actions-baseline/sysmon_baseline.evtx
-POOL: good
-PLATFORM: windows
-FORMAT: evtx
-EVENTS: $env:EVENT_COUNT
-HOST: github-actions-runner
-OS: $os
-DOMAIN_JOINED: false
-LOGGING_CONFIG: Sysmon64 with SwiftOnSecurity sysmonconfig-export.xml
-CAPTURE_DATE: $(Get-Date -Format 'yyyy-MM-dd')
-CAPTURE_WINDOW: $env:BASELINE_START_LABEL–$endLabel (~10 min simulated workstation activity)
-REVIEWED_BY: gal.romano@cybereason.com
-REVIEW_DATE: $(Get-Date -Format 'yyyy-MM-dd')
-PII_SCRUB_METHOD: ephemeral CI runner — no real user data; hostname is runner-assigned
-NOTES: Windows Server 2022 GHA runner baseline. Simulated workstation activity: file I/O (create/read/copy/delete), system commands (ipconfig, tasklist, whoami, systeminfo, ping 127.0.0.1), registry reads, HTTPS to microsoft.com, 5-min background service idle. No attack techniques. Does not simulate: cmdkey, 7zip with password, adplus, AgentExecutor, or any credential-access tools.
-"@ | Out-File "windows_good_pool.meta" -Encoding utf8
+          $date = Get-Date -Format 'yyyy-MM-dd'
+          $lines = @(
+            "FILE: good-pool/windows/github-actions-baseline/sysmon_baseline.evtx",
+            "POOL: good",
+            "PLATFORM: windows",
+            "FORMAT: evtx",
+            "EVENTS: $env:EVENT_COUNT",
+            "HOST: github-actions-runner",
+            "OS: $os",
+            "DOMAIN_JOINED: false",
+            "LOGGING_CONFIG: Sysmon64 with SwiftOnSecurity sysmonconfig-export.xml",
+            "CAPTURE_DATE: $date",
+            "CAPTURE_WINDOW: $env:BASELINE_START_LABEL to $endLabel (~10 min simulated workstation activity)",
+            "REVIEWED_BY: gal.romano@cybereason.com",
+            "REVIEW_DATE: $date",
+            "PII_SCRUB_METHOD: ephemeral CI runner — no real user data; hostname is runner-assigned",
+            "NOTES: Windows Server 2022 GHA runner baseline. Simulated normal workstation activity (file I/O, ipconfig, tasklist, whoami, systeminfo, ping, registry reads, HTTPS to microsoft.com, 5-min background idle). No attack techniques. Excludes cmdkey, 7zip with password, adplus, AgentExecutor."
+          )
+          $lines | Out-File "windows_good_pool.meta" -Encoding utf8
 
       - uses: actions/upload-artifact@v4
         with:
@@ -261,23 +263,23 @@ NOTES: Windows Server 2022 GHA runner baseline. Simulated workstation activity: 
       - name: Write meta file
         run: |
           OS=$(. /etc/os-release && echo "$PRETTY_NAME")
-          cat > /tmp/linux_baseline.meta <<EOF
-FILE: good-pool/linux/server-baseline-real/audit.log
-POOL: good
-PLATFORM: linux
-FORMAT: auditd
-EVENTS: $COUNT
-HOST: github-actions-runner
-OS: $OS
-DOMAIN_JOINED: false
-LOGGING_CONFIG: SVP bad-pool watchpoints (credential_access / account_creation / cron_mod / log_destruction) + broad execve capture (exec_all)
-CAPTURE_DATE: $(date +%Y-%m-%d)
-CAPTURE_WINDOW: ~10 min simulated server activity
-REVIEWED_BY: gal.romano@cybereason.com
-REVIEW_DATE: $(date +%Y-%m-%d)
-PII_SCRUB_METHOD: ephemeral CI runner — no real user data; auid=UIDs are runner-assigned
-NOTES: Ubuntu 22.04 GHA runner baseline. Simulated normal server activity: file I/O (create/copy/compress/delete), sysadmin commands (df, free, ps, ss, dpkg), 5-min background idle. No attack techniques. Watchpoints for all bad-pool techniques loaded — any hits indicate over-broad detection rules.
-EOF
+          {
+            echo "FILE: good-pool/linux/server-baseline-real/audit.log"
+            echo "POOL: good"
+            echo "PLATFORM: linux"
+            echo "FORMAT: auditd"
+            echo "EVENTS: $COUNT"
+            echo "HOST: github-actions-runner"
+            echo "OS: $OS"
+            echo "DOMAIN_JOINED: false"
+            echo "LOGGING_CONFIG: SVP bad-pool watchpoints + broad execve capture (exec_all)"
+            echo "CAPTURE_DATE: $(date +%Y-%m-%d)"
+            echo "CAPTURE_WINDOW: ~10 min simulated server activity"
+            echo "REVIEWED_BY: gal.romano@cybereason.com"
+            echo "REVIEW_DATE: $(date +%Y-%m-%d)"
+            echo "PII_SCRUB_METHOD: ephemeral CI runner — no real user data; auid=UIDs are runner-assigned"
+            echo "NOTES: Ubuntu 22.04 GHA runner baseline. Simulated normal server activity (file I/O, df/free/ps/ss/dpkg, 5-min background idle). All bad-pool watchpoints loaded. No attack techniques."
+          } > /tmp/linux_baseline.meta
 
       - uses: actions/upload-artifact@v4
         with:
