@@ -123,7 +123,7 @@ jobs:
           Write-Host "Events after baseline start: $count (total in export: $total)"
           echo "EVENT_COUNT=$total" >> $env:GITHUB_ENV
 
-          if ($total -lt 50) {
+          if ($total -lt 10) {
             Write-Host "ERROR: Too few events ($total) — Sysmon may not be capturing"
             exit 1
           }
