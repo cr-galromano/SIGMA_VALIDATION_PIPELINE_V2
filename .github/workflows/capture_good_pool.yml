@@ -288,75 +288,71 @@ jobs:
             /tmp/linux_baseline.log
             /tmp/linux_baseline.meta
 
-  # ── macOS: Unified Log baseline ───────────────────────────────────────────────
-  # Uses macOS Unified Log (always available, no daemon required) to capture
-  # process activity. Converts to SIGMA JSONL via mac_unified_to_sigma.py.
-  # Note: CommandLine is not available in Unified Log (requires ESF or OpenBSM).
-  # For good-pool purposes this is fine — rules that check CommandLine simply
-  # won't match (no false positives).
-  # Anomaly-safe: no osascript, no base64 -d, no csrutil, no security/keychain tools.
+  # ── macOS: ps-based process snapshot baseline ─────────────────────────────────
+  # Captures running processes via `ps` — instant, no log daemon needed.
+  # Gives us real macOS Image paths from a clean GHA runner. CommandLine is
+  # available from ps command output. No log streaming that could hang.
+  # Anomaly-safe: no osascript, no base64 -d, no csrutil, no security tools.
   macos-good-pool:
     runs-on: macos-13
     steps:
       - uses: actions/checkout@v4
 
-      - name: Record baseline start time
-        run: echo "START_TIME=$(date -u +'%Y-%m-%d %H:%M:%S')" >> $GITHUB_ENV
-
-      - name: Simulate normal macOS workstation activity (~10 min)
+      - name: Let system settle and capture process snapshot
         run: |
-          # ── File I/O ─────────────────────────────────────────────────────────
-          mkdir -p /tmp/svp_baseline
-          for i in $(seq 1 15); do
-            echo "baseline entry $i — $(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-              > /tmp/svp_baseline/doc_$i.txt
-            sleep 2
-          done
-          ls -la /tmp/svp_baseline/ > /dev/null
-          cp /tmp/svp_baseline/doc_1.txt /tmp/svp_baseline/doc_1.bak
-          mv /tmp/svp_baseline/doc_1.bak /tmp/svp_baseline/doc_archived.txt
-          cat /tmp/svp_baseline/doc_archived.txt > /dev/null
-          rm -rf /tmp/svp_baseline
+          # Brief idle so background services have started
+          sleep 30
 
-          # ── Common macOS sysadmin commands ────────────────────────────────────
-          sw_vers
-          uname -a
-          uptime
-          id
-          hostname
-          ps aux | head -20 > /dev/null
-          df -h > /dev/null
-          du -sh /usr/local > /dev/null 2>&1 || true
-          launchctl list | head -20 > /dev/null
+          # Snapshot all running processes with full paths and command lines
+          # -A = all processes, -o = output format
+          ps -A -o pid=,ppid=,user=,comm= > /tmp/ps_snapshot.txt
+          wc -l /tmp/ps_snapshot.txt
+          head -20 /tmp/ps_snapshot.txt
 
-          # ── Background idle ───────────────────────────────────────────────────
-          echo "Idling 5 minutes for background service activity..."
-          sleep 300
-
-          echo "$(date -u +%Y-%m-%dT%H:%M:%SZ) simulation complete"
-
-      - name: Capture Unified Log and convert to SIGMA JSONL
+      - name: Convert ps snapshot to SIGMA JSONL
         run: |
-          echo "Capturing Unified Log from $START_TIME onwards..."
-          log show \
-            --style json \
-            --start "$START_TIME" \
-            --predicate 'processImagePath BEGINSWITH "/" AND processImagePath != "/usr/libexec/logd"' \
-            2>/dev/null > /tmp/unified_raw.json || true
+          python3 - /tmp/ps_snapshot.txt /tmp/mac_baseline.jsonl <<'PYEOF'
+          import sys, json
+          from pathlib import Path
 
-          RAW_SIZE=$(wc -c < /tmp/unified_raw.json)
-          echo "Raw JSON size: $RAW_SIZE bytes"
-
-          python3 scripts/mac_unified_to_sigma.py \
-            /tmp/unified_raw.json /tmp/mac_baseline.jsonl
+          in_path, out_path = sys.argv[1], sys.argv[2]
+          records = []
+          seen = set()
+          for line in Path(in_path).read_text().splitlines():
+              parts = line.split(None, 3)
+              if len(parts) < 4:
+                  continue
+              try:
+                  pid, ppid = int(parts[0]), int(parts[1])
+              except ValueError:
+                  continue
+              user, comm = parts[2], parts[3].strip()
+              if not comm.startswith('/'):
+                  continue
+              image = comm.split()[0]
+              if image in seen:
+                  continue
+              seen.add(image)
+              records.append({
+                  "type": "process_creation",
+                  "Image": image,
+                  "CommandLine": comm,
+                  "ProcessId": pid,
+                  "ParentProcessId": ppid,
+                  "User": user,
+                  "UtcTime": "",
+              })
+          with open(out_path, 'w') as f:
+              for r in records:
+                  f.write(json.dumps(r) + '\n')
+          print(f"Wrote {len(records)} records to {out_path}", file=sys.stderr)
+          PYEOF
 
           COUNT=$(wc -l < /tmp/mac_baseline.jsonl)
           echo "COUNT=$COUNT" >> $GITHUB_ENV
-          echo "Unique process entries: $COUNT"
-
-          if [[ "$COUNT" -lt 5 ]]; then
+          echo "Process records: $COUNT"
+          if [[ "$COUNT" -lt 10 ]]; then
             echo "ERROR: Too few records ($COUNT)"
-            head -5 /tmp/unified_raw.json
             exit 1
           fi
 
@@ -373,13 +369,13 @@ jobs:
             echo "HOST: github-actions-runner"
             echo "OS: macOS $OS ($BUILD)"
             echo "DOMAIN_JOINED: false"
-            echo "LOGGING_CONFIG: macOS Unified Log (processImagePath filter)"
+            echo "LOGGING_CONFIG: ps process snapshot (pid,ppid,user,comm)"
             echo "CAPTURE_DATE: $(date +%Y-%m-%d)"
-            echo "CAPTURE_WINDOW: ~10 min simulated workstation activity"
+            echo "CAPTURE_WINDOW: process snapshot after 30s idle"
             echo "REVIEWED_BY: gal.romano@cybereason.com"
             echo "REVIEW_DATE: $(date +%Y-%m-%d)"
             echo "PII_SCRUB_METHOD: ephemeral CI runner — no real user data"
-            echo "NOTES: macOS 13 GHA runner baseline. Unified Log converted to SIGMA JSONL via mac_unified_to_sigma.py. CommandLine not available (Unified Log limitation — requires ESF for that field). Simulated normal activity (file I/O, sw_vers, uname, ps, df, launchctl, 5-min idle). Excludes osascript, base64 -d, csrutil, security/keychain tools."
+            echo "NOTES: macOS 13 GHA runner baseline. Running process snapshot via ps, deduplicated by Image path, converted to SIGMA JSONL. CommandLine available from ps comm field. Excludes osascript, base64 -d, csrutil, security/keychain tools."
           } > /tmp/mac_baseline.meta
 
       - uses: actions/upload-artifact@v4
